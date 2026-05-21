@@ -749,7 +749,7 @@ func _populate_brush_mask_grid() -> void:
 		brush_mask_grid.add_child(lbl)
 
 
-func _on_brush_mask_selected(tex: Texture2D, fname: String) -> void:
+func _on_brush_mask_selected(tex: Texture2D, _fname: String) -> void:
 	if selected_node:
 		selected_node.brush_mask = tex
 	_update_brush_mask_label()

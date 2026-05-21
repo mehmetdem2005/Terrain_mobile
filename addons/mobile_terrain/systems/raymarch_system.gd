@@ -111,13 +111,13 @@ static func intersect_ray(
 	var max_idx: int = map_size - 1
 	lx = clampi(lx, 0, max_idx)
 	lz = clampi(lz, 0, max_idx)
-	var nxL: int = lx - 1 if lx > 0 else 0
-	var nxR: int = lx + 1 if lx < max_idx else max_idx
-	var nzD: int = lz - 1 if lz > 0 else 0
-	var nzU: int = lz + 1 if lz < max_idx else max_idx
-	var hL: float = height_data[lz * map_size + nxL]
-	var hR: float = height_data[lz * map_size + nxR]
-	var hD: float = height_data[nzD * map_size + lx]
-	var hU: float = height_data[nzU * map_size + lx]
-	var norm := Vector3(hL - hR, 2.0, hD - hU).normalized()
+	var nx_l: int = lx - 1 if lx > 0 else 0
+	var nx_r: int = lx + 1 if lx < max_idx else max_idx
+	var nz_d: int = lz - 1 if lz > 0 else 0
+	var nz_u: int = lz + 1 if lz < max_idx else max_idx
+	var h_l: float = height_data[lz * map_size + nx_l]
+	var h_r: float = height_data[lz * map_size + nx_r]
+	var h_d: float = height_data[nz_d * map_size + lx]
+	var h_u: float = height_data[nz_u * map_size + lx]
+	var norm := Vector3(h_l - h_r, 2.0, h_d - h_u).normalized()
 	return {"pos": hit_pos, "normal": norm}

@@ -22,17 +22,17 @@ var noise_gen: FastNoiseLite = null
 
 
 func _init(
-	map_size_: int,
-	brush_mask_: Texture2D,
-	brush_mask_image_: Image,
-	brush_shape_: int,
-	noise_gen_: FastNoiseLite
+	p_map_size: int,
+	p_brush_mask: Texture2D,
+	p_brush_mask_image: Image,
+	p_brush_shape: int,
+	p_noise_gen: FastNoiseLite
 ) -> void:
-	map_size = map_size_
-	brush_mask = brush_mask_
-	brush_mask_image = brush_mask_image_
-	brush_shape = brush_shape_
-	noise_gen = noise_gen_
+	map_size = p_map_size
+	brush_mask = p_brush_mask
+	brush_mask_image = p_brush_mask_image
+	brush_shape = p_brush_shape
+	noise_gen = p_noise_gen
 
 
 # Whether (px) falls inside the brush footprint. Mask-based brushes

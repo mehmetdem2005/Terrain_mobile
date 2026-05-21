@@ -78,15 +78,15 @@ static func build_chunk_mesh(
 			vertices[vi] = Vector3(x, h, z)
 			# Finite-difference normal with manual clamp (faster than a
 			# get_height() call at 2M+ invocations per full rebuild).
-			var nxL: int = gx - 1 if gx > 0 else 0
-			var nxR: int = gx + 1 if gx < max_idx else max_idx
-			var nzD: int = gz - 1 if gz > 0 else 0
-			var nzU: int = gz + 1 if gz < max_idx else max_idx
-			var hL: float = height_data[gz * map_size + nxL]
-			var hR: float = height_data[gz * map_size + nxR]
-			var hD: float = height_data[nzD * map_size + gx]
-			var hU: float = height_data[nzU * map_size + gx]
-			normals[vi] = Vector3(hL - hR, 2.0, hD - hU).normalized()
+			var nx_l: int = gx - 1 if gx > 0 else 0
+			var nx_r: int = gx + 1 if gx < max_idx else max_idx
+			var nz_d: int = gz - 1 if gz > 0 else 0
+			var nz_u: int = gz + 1 if gz < max_idx else max_idx
+			var h_l: float = height_data[gz * map_size + nx_l]
+			var h_r: float = height_data[gz * map_size + nx_r]
+			var h_d: float = height_data[nz_d * map_size + gx]
+			var h_u: float = height_data[nz_u * map_size + gx]
+			normals[vi] = Vector3(h_l - h_r, 2.0, h_d - h_u).normalized()
 			uvs[vi] = Vector2(float(gx) * inv_uv_denom, float(gz) * inv_uv_denom)
 			vi += 1
 

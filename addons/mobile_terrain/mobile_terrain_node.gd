@@ -630,7 +630,7 @@ vec3 _mt_sample_var(sampler2D s, vec2 uv) {
 	vec2 cell = floor(world_uv / max(texture_cell_size, 0.5));
 	float h1 = _mt_hash(cell);
 	float h_rot = _mt_hash(cell + vec2(17.0, 31.0));
-	
+
 	vec2 sample_uv = uv;
 	if (rotation_jitter > 0.001) {
 		// Random angle in [0, 2π], jitter-strength-attenuated. At
@@ -644,10 +644,10 @@ vec3 _mt_sample_var(sampler2D s, vec2 uv) {
 		vec2 cell_centre_uv = (cell + 0.5) * texture_cell_size * tex_scale;
 		sample_uv = _mt_rotate_uv_around(sample_uv, cell_centre_uv, angle);
 	}
-	
+
 	vec3 base = texture(s, sample_uv).rgb;
 	if (texture_variation < 0.001) return base;
-	
+
 	// Big offset so the second sample reads totally different tile data.
 	vec2 offset = vec2(h1 * 17.3, fract(h1 * 31.7) * 23.1);
 	vec3 alt = texture(s, sample_uv + offset).rgb;
@@ -675,7 +675,7 @@ vec3 _mt_triplanar(sampler2D s, vec3 wpos) {
 	// so on a nearly-flat surface we essentially just use the XZ sample.
 	vec3 w = pow(abs(n), vec3(4.0));
 	w /= max(w.x + w.y + w.z, 0.0001);
-	
+
 	vec3 xz = _mt_sample_var(s, wpos.xz * tex_scale);
 	vec3 xy = _mt_sample_var(s, wpos.xy * tex_scale);
 	vec3 yz = _mt_sample_var(s, wpos.zy * tex_scale);
@@ -715,9 +715,9 @@ void fragment() {
 		// SOMETHING instead of pitch black.
 		blend = vec4(1.0, 0.0, 0.0, 0.0);
 	}
-	
+
 	vec2 uv = v_world_pos.xz * tex_scale;
-	
+
 	// === Albedo: 4-way splatmap blend, anti-tile via _mt_sample_var ===
 	// Albedo is the most visually obvious tiling target so the variation
 	// sampler is applied here. Normal/roughness/AO keep single-sample
@@ -732,7 +732,7 @@ void fragment() {
 	vec3 c2 = _mt_albedo_sample(tex_a_2, v_world_pos);
 	vec3 c3 = _mt_albedo_sample(tex_a_3, v_world_pos);
 	ALBEDO = c0 * blend.r + c1 * blend.g + c2 * blend.b + c3 * blend.a;
-	
+
 	// === Normal: linear blend in tangent space ===
 	// Linear blending of tangent-space normals isn't perfectly correct
 	// (Reoriented Normal Mapping is the strict-PBR approach), but it's
@@ -753,14 +753,14 @@ void fragment() {
 	vec3 n3 = _mt_albedo_sample(tex_n_3, v_world_pos);
 	NORMAL_MAP = n0 * blend.r + n1 * blend.g + n2 * blend.b + n3 * blend.a;
 	NORMAL_MAP_DEPTH = normal_strength;
-	
+
 	// === Roughness: scalar blend, multiplied by global multiplier ===
 	float r0 = texture(tex_r_0, uv).r;
 	float r1 = texture(tex_r_1, uv).r;
 	float r2 = texture(tex_r_2, uv).r;
 	float r3 = texture(tex_r_3, uv).r;
 	ROUGHNESS = clamp((r0 * blend.r + r1 * blend.g + r2 * blend.b + r3 * blend.a) * roughness_multiplier, 0.0, 1.0);
-	
+
 	// === AO: scalar blend, lerped against 1.0 by ao_strength ===
 	// ao_strength=0 → no occlusion (AO=1), ao_strength=1 → full occlusion
 	// from the maps. Letting users dial this back keeps shadows from
