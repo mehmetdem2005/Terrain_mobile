@@ -21,6 +21,9 @@ fi
 if [ ! -L "$SAVE_TEST/unit_tests" ]; then
   ln -s "$ROOT/test/unit" "$SAVE_TEST/unit_tests"
 fi
+if [ ! -L "$SAVE_TEST/visual_tests" ]; then
+  ln -s "$ROOT/test/visual" "$SAVE_TEST/visual_tests"
+fi
 cd "$SAVE_TEST"
 godot --headless --import --quit >/dev/null 2>&1 || true
 
