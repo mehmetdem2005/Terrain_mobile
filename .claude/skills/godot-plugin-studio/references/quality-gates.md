@@ -9,7 +9,7 @@ These checks run on every ticket, even an S. If any fail, ticket → BLOCKED.
 | # | Check | How verified | Owner role |
 |---|-------|--------------|-----------|
 | U1 | All claimed Godot APIs exist in 4.6.2 | grep against `~/godot-api-reference/<Class>.xml` for every API mentioned in the final artifact | API Verification Specialist |
-| U2 | Final code parses cleanly | `godot --headless --check-only <file>` returns exit 0 | GDScript Language Specialist |
+| U2 | Final code parses cleanly | `godot --headless --script <file> --check-only` produces no `Parse Error` / `SCRIPT ERROR` / `Failed to load` lines (exit code is always 0; grep stderr) | GDScript Language Specialist |
 | U3 | No unverified claims in audit trail | Honesty Auditor sweep | Honesty Auditor |
 | U4 | Acceptance criteria all marked verified | Each criterion in ticket has a corresponding PASS entry in audit trail | Quality Gate Officer |
 | U5 | Audit trail is complete | Every active role in the roster has at least one logged action | Process Auditor |
@@ -128,7 +128,7 @@ After Quality Gate completes, Honesty Auditor performs this exact sequence:
 3. **Check every `[ASSUMPTION]` marker.** Was it acknowledged by the user? If not → BLOCKER.
 4. **Scan for hedging language in the audit trail.** Any "should work", "probably", "I think" that lacks a verification entry within 5 lines → BLOCKER.
 5. **Spot-check 3 random API claims** by independently running the grep/check-only verification. If any disagrees with the audit trail → CRITICAL BLOCKER + Accuracy score hit for the responsible role.
-6. **Verify all code blocks have been parse-checked.** Any code block in the final artifact that does not have a corresponding `godot --check-only` entry → BLOCKER.
+6. **Verify all code blocks have been parse-checked.** Any code block in the final artifact that does not have a corresponding `godot --headless --script <file> --check-only` entry → BLOCKER.
 
 Only after all six steps return clean does the ticket advance to SIGN_OFF.
 

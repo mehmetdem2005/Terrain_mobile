@@ -142,7 +142,7 @@ func _enter_tree() -> void:
     var arr: Array[Node] = []
     pass
 EOF
-godot --headless --check-only /tmp/gd-check/test.gd
+godot --headless --script /tmp/gd-check/test.gd --check-only
 echo "exit=$?"
 ```
 Exit 0 = valid syntax. Anything else = the compiler's exact error is the truth.
@@ -150,13 +150,13 @@ Exit 0 = valid syntax. Anything else = the compiler's exact error is the truth.
 ### Typed array verification
 ```bash
 echo 'var a: Array[Node] = []' > /tmp/gd-check/typed_arr.gd
-godot --headless --check-only /tmp/gd-check/typed_arr.gd
+godot --headless --script /tmp/gd-check/typed_arr.gd --check-only
 ```
 
 ### Typed dictionary verification (4.4+)
 ```bash
 echo 'var d: Dictionary[String, int] = {}' > /tmp/gd-check/typed_dict.gd
-godot --headless --check-only /tmp/gd-check/typed_dict.gd
+godot --headless --script /tmp/gd-check/typed_dict.gd --check-only
 ```
 Note: typed dictionaries landed in 4.4. Always verify the precise syntax for 4.6.2.
 
@@ -167,7 +167,7 @@ cat > /tmp/gd-check/annot.gd << 'EOF'
 @tool
 @export_range(0, 100, 1) var x: int = 50
 EOF
-godot --headless --check-only /tmp/gd-check/annot.gd
+godot --headless --script /tmp/gd-check/annot.gd --check-only
 ```
 
 ### Await on signal
@@ -179,7 +179,7 @@ func bar() -> void:
     await foo
     print("emitted")
 EOF
-godot --headless --check-only /tmp/gd-check/await.gd
+godot --headless --script /tmp/gd-check/await.gd --check-only
 ```
 
 ### Connect with method reference (4.x pattern)
@@ -192,7 +192,7 @@ func _ready() -> void:
 func _on_foo() -> void:
     pass
 EOF
-godot --headless --check-only /tmp/gd-check/connect.gd
+godot --headless --script /tmp/gd-check/connect.gd --check-only
 ```
 
 ## Anti-patterns flagged on sight (Godot 3.x → 4.x migration traps)
@@ -235,8 +235,8 @@ Technical, exact. Cite the parse check result.
 ```
 SYNTAX VERIFICATION
 SUBJECT: `var x: Dictionary[String, Vector3] = {}`
-COMMAND: echo '<snippet>' | godot --headless --check-only /dev/stdin
-RESULT: exit 0 (parses cleanly in 4.6.2)
+COMMAND: F=$(mktemp --suffix=.gd) && echo '<snippet>' > "$F" && godot --headless --script "$F" --check-only; rm "$F"
+RESULT: stderr empty of `Parse Error` / `SCRIPT ERROR` / `Failed to load` (parses cleanly in 4.6.2)
 VERDICT: Valid. Typed dictionaries with primitive-keyed value-class form work.
 ```
 
@@ -292,7 +292,7 @@ func _ready() -> void:
     await test
     print("done")
 EOF
-godot --headless --check-only /tmp/await-test.gd
+godot --headless --script /tmp/await-test.gd --check-only
 ```
 
 ### Verify signal signature compatibility
@@ -362,7 +362,7 @@ Counts and names should match.
 ### Verify @onready timing
 `@onready var x = $Path` evaluates at `_ready` time. If used in a plugin context (where the plugin script is on an EditorPlugin node), the timing may differ from a scene script. Test:
 ```bash
-godot --headless --check-only addons/<plugin>/plugin.gd
+godot --headless --script addons/<plugin>/plugin.gd --check-only
 ```
 
 ### Verify _process / _physics_process correctness

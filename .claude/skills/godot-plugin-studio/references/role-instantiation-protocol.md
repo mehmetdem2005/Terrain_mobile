@@ -130,7 +130,7 @@ Every new role's `current.md` follows this structure. The template is the same o
 ## Real commands (if applicable)
 [Bash commands the role uses, with their meaning. Example:
 - `grep "method name=\"<X>\"" ~/godot-api-reference/<Class>.xml` — verifies method exists in 4.6.2 API
-- `godot --headless --check-only <file>` — parse check]
+- `godot --headless --script <file> --check-only` — parse check]
 
 ## Rejection examples
 [2-4 concrete examples of things this role would block, formatted in the role's voice. These calibrate the role's strictness and help future calibration.]

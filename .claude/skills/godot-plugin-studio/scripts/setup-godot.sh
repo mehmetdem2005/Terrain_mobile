@@ -175,9 +175,10 @@ func _exit_tree() -> void:
     pass
 EOF
 
-if "$BIN_DIR/godot" --headless --check-only "$TEST_FILE" 2>&1 | grep -qE "error|invalid"; then
+SMOKE_OUT=$("$BIN_DIR/godot" --headless --script "$TEST_FILE" --check-only 2>&1)
+if echo "$SMOKE_OUT" | grep -qE "Parse Error|SCRIPT ERROR|Failed to load"; then
     echo -e "${RED}✗ Smoke test FAILED — parse check produced errors${NC}"
-    "$BIN_DIR/godot" --headless --check-only "$TEST_FILE"
+    echo "$SMOKE_OUT"
     rm -f "$TEST_FILE"
     exit 1
 else
@@ -202,7 +203,7 @@ echo "You can now run plugin development tickets through this skill."
 echo
 echo "Quick commands:"
 echo "  godot --version                          — verify Godot install"
-echo "  godot --headless --check-only <file.gd>  — parse-check a script"
+echo "  godot --headless --script <file.gd> --check-only  — parse-check a script"
 echo "  gdlint <file.gd>                         — static analysis"
 echo "  grep 'method name=\"X\"' \$HOME/godot-api-reference/<Class>.xml  — verify API"
 echo

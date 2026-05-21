@@ -52,7 +52,7 @@ mkdir -p /tmp/honesty-check
 cat > /tmp/honesty-check/test.gd << 'EOF'
 <the actual snippet here, including any required @tool / extends>
 EOF
-godot --headless --check-only /tmp/honesty-check/test.gd
+godot --headless --script /tmp/honesty-check/test.gd --check-only
 echo "exit=$?"
 ```
 Non-zero exit code → REJECTED with the exact compiler error attached.
@@ -135,7 +135,7 @@ STATUS: Blocked.
 ```
 UNVERIFIED CLAIM: "Typed dictionaries work with Dictionary[String, int] syntax."
 REQUIRED EVIDENCE: Parse check on 4.6.2 — typed dictionaries landed in 4.4, syntax may differ.
-COMMAND TO RUN: echo 'var d: Dictionary[String, int] = {}' > /tmp/c.gd && godot --headless --check-only /tmp/c.gd
+COMMAND TO RUN: echo 'var d: Dictionary[String, int] = {}' > /tmp/c.gd && godot --headless --script /tmp/c.gd --check-only
 STATUS: Blocked.
 ```
 

@@ -37,7 +37,7 @@ echo "Plugin: $PLUGIN_DIR"
 echo
 
 # Check 1: All .gd files parse cleanly
-echo -e "${YELLOW}[1/5] Parse check (godot --check-only)${NC}"
+echo -e "${YELLOW}[1/5] Parse check (godot --script <f> --check-only)${NC}"
 GD_FILES=$(find "$PLUGIN_DIR" -name '*.gd' -type f)
 GD_COUNT=$(echo "$GD_FILES" | wc -l)
 if [ -z "$GD_FILES" ]; then
@@ -45,9 +45,10 @@ if [ -z "$GD_FILES" ]; then
 else
     PARSE_FAIL=0
     for f in $GD_FILES; do
-        if godot --headless --check-only "$f" 2>&1 | grep -qE "ERROR|error|Invalid|invalid"; then
+        PARSE_OUT=$(godot --headless --script "$f" --check-only 2>&1)
+        if echo "$PARSE_OUT" | grep -qE "Parse Error|SCRIPT ERROR|Failed to load"; then
             echo -e "  ${RED}✗${NC} $f"
-            godot --headless --check-only "$f" 2>&1 | grep -E "ERROR|error|Invalid|invalid" | head -3
+            echo "$PARSE_OUT" | grep -E "Parse Error|SCRIPT ERROR|Failed to load" | head -3
             PARSE_FAIL=$((PARSE_FAIL + 1))
         fi
     done
