@@ -1,0 +1,78 @@
+{
+  "studio_version": "1.0.0",
+  "schema_version": 1,
+  "scoring": {
+    "weights": {
+      "accuracy": 0.35,
+      "defect_catch": 0.25,
+      "signal_to_noise": 0.20,
+      "escalation_quality": 0.10,
+      "charter_consistency": 0.10
+    },
+    "bands": {
+      "distinguished": 90,
+      "meets": 75,
+      "needs_attention": 65,
+      "pip": 50,
+      "redesign": 0
+    },
+    "pip_threshold": 64,
+    "pip_period_tickets": 5,
+    "rolling_window_tickets": 10
+  },
+  "ticket_size_thresholds": {
+    "S": { "max_loc_change": 5 },
+    "M": { "max_new_loc": 100, "max_files": 1 },
+    "L": { "max_new_loc": 500, "max_files": 8 },
+    "XL": { "min_indicator": "any of: new plugin from scratch, multi-platform, mobile-targeted, public API surface" }
+  },
+  "performance_budgets": {
+    "desktop": {
+      "plugin_enable_ms": 50,
+      "plugin_steady_process_ms_per_frame": 1,
+      "plugin_ram_mb": 30,
+      "inspector_refresh_ms": 16,
+      "editor_cold_start_contrib_ms": 100,
+      "plugin_disable_ms": 50
+    },
+    "mobile": {
+      "plugin_enable_ms": 200,
+      "plugin_steady_process_ms_per_frame": 2,
+      "plugin_ram_mb": 50,
+      "inspector_refresh_ms": 33,
+      "editor_cold_start_contrib_ms": 300,
+      "plugin_disable_ms": 200,
+      "thermal_stable_minutes": 5,
+      "touch_target_min_px": 44
+    }
+  },
+  "supervisors_always_active": [
+    "Honesty Auditor",
+    "Quality Gate Officer",
+    "Audit Trail Officer"
+  ],
+  "honesty_override_requires": [
+    "explicit_override_annotation",
+    "tech_director_or_studio_head_signature",
+    "permanent_record_in_overrides_md",
+    "auto_postmortem_ticket"
+  ],
+  "self_improvement": {
+    "minor_amendment_autonomy": true,
+    "major_amendment_requires_user_signoff": true,
+    "amendment_calibration_committee": true
+  },
+  "mobile_roster_triggers": [
+    "mobile", "Android", "phone", "tablet", "touch",
+    "Godot Android Editor", "android editor",
+    "Forward Mobile", "forward_mobile",
+    "Android Plugin v2", "android plugin v2",
+    "AAR", "Gradle", "Kotlin", "GodotPlugin"
+  ],
+  "godot_version": "4.6.2-stable",
+  "api_reference_path": "~/godot-api-reference",
+  "test_harness_path": "~/godot-plugin-studio-harness",
+  "tickets_directory": ".studio/tickets",
+  "agents_directory": ".studio/agents",
+  "knowledge_base_directory": ".studio/knowledge-base"
+}
