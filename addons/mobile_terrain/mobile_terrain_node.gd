@@ -112,7 +112,13 @@ extends Node3D
 
 var current_tool: int = 0:
 	set = _set_current_tool
-var current_paint_slot: int = 0
+# TKT-004 H8: clamp on assign. The splatmap is RGBA8 (4 slots), so a paint
+# slot outside [0, 3] would write to an undefined channel. A runtime guard
+# in _paint_splatmap already returns early on OOB, but clamping in the
+# setter keeps the value valid no matter where it's written from (UI
+# refresh race, script, scene load) rather than silently skipping a dab.
+var current_paint_slot: int = 0:
+	set = _set_current_paint_slot
 var current_object_slot: int = 0
 var brush_shape: int = 0
 var brush_radius: float = 8.0:
@@ -139,6 +145,10 @@ func _set_current_tool(val: int) -> void:
 		return
 	current_tool = val
 	_splatmap_stroke_image = null
+
+
+func _set_current_paint_slot(val: int) -> void:
+	current_paint_slot = clampi(val, 0, 3)
 
 
 # V21: default lowered from 0.5 to 0.2. With the rate-limit cap at 25 Hz,
