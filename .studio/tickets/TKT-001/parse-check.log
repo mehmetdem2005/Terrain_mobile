@@ -1,0 +1,53 @@
+=== Parse check (godot --script --check-only) ===
+PASS: addons/mobile_terrain/core/terrain_constants.gd
+PASS: addons/mobile_terrain/core/terrain_diagnostics.gd
+
+FAIL: addons/mobile_terrain/editor/save_orchestrator.gd
+SCRIPT ERROR: Parse Error: Identifier "TerrainConstants" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+ERROR: Failed to load script "res://addons/mobile_terrain/editor/save_orchestrator.gd" with error "Parse error".
+PASS: addons/mobile_terrain/fix_texture_imports.gd
+PASS: addons/mobile_terrain/mobile_terrain_data.gd
+
+FAIL: addons/mobile_terrain/mobile_terrain_node.gd
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "MobileTerrainData" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Cannot infer the type of "data" variable because the value doesn't have a set type.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+
+FAIL: addons/mobile_terrain/mobile_terrain_plugin.gd
+SCRIPT ERROR: Parse Error: Could not find type "TerrainSaveOrchestrator" in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainDiagnostics" not declared in the current scope.
+SCRIPT ERROR: Parse Error: Identifier "TerrainSaveOrchestrator" not declared in the current scope.
+PASS: addons/mobile_terrain/systems/brush_system.gd
+PASS: addons/mobile_terrain/systems/raymarch_system.gd
+
+FAIL: addons/mobile_terrain/systems/sculpt_ops.gd
+SCRIPT ERROR: Parse Error: Could not find type "BrushSystem" in the current scope.
+SCRIPT ERROR: Parse Error: Could not find type "BrushSystem" in the current scope.
+SCRIPT ERROR: Parse Error: Could not find type "BrushSystem" in the current scope.
+SCRIPT ERROR: Parse Error: Could not find type "BrushSystem" in the current scope.
+SCRIPT ERROR: Parse Error: Could not find type "BrushSystem" in the current scope.
+SCRIPT ERROR: Parse Error: Could not find type "BrushSystem" in the current scope.
+ERROR: Failed to load script "res://addons/mobile_terrain/systems/sculpt_ops.gd" with error "Parse error".
+
+Total: 4 parse errors
