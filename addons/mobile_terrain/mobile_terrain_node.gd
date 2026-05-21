@@ -1081,46 +1081,18 @@ func bake_collision():
 
 func _import_exr(val: bool):
 	if not val or not import_texture: return
-	# V20 FIX (bug E1): defensively duplicate the image instead of
-	# operating on the texture's internal reference. `ImageTexture.get_image()`
-	# returns a shared reference in Godot 4 — the subsequent decompress()
-	# and resize() calls would mutate that shared image, leaking changes
-	# back into the source texture. CompressedTexture2D returns a fresh
-	# image so this is harmless there, but ImageTexture (the common case
-	# when assigning a runtime-created texture) gets corrupted.
-	# `duplicate()` is cheap relative to the resize that follows it.
-	var src_img = import_texture.get_image()
-	if not src_img: return
-	var img: Image = src_img.duplicate()
-	if img.is_compressed(): img.decompress()
-	img.resize(map_size, map_size, Image.INTERPOLATE_BILINEAR)
-	height_data.resize(map_size * map_size)
-	# V21 PERFORMANCE FIX: bulk-read pixel bytes instead of N²
-	# `img.get_pixel(x, z).r` calls.
-	#
-	# The old per-pixel loop on a 1254×1254 import = 1.57M GDScript-to-
-	# native crossings via get_pixel, each one allocating a Color object
-	# just to discard 3 of its 4 channels. On mobile that's a several-
-	# second hang on the import button.
-	#
-	# `get_data()` returns the entire image's raw byte array in one shot.
-	# We convert to a format we know the byte layout of (RGBA8 = 4 bytes
-	# per pixel, R is the first byte) so the heightmap mapping is just
-	# a single integer multiply + cast per cell. Result: 30-50× faster
-	# on Mobile (the GDScript→native call cost dominated the old path).
-	#
-	# Format conversion is in-place on our duplicate; the source texture
-	# stays untouched (E1 defensive duplicate above protects it).
-	if img.get_format() != Image.FORMAT_RGBA8:
-		img.convert(Image.FORMAT_RGBA8)
-	var raw: PackedByteArray = img.get_data()
+	# TKT-003 Phase A.2: byte-bulk image-to-heights conversion extracted
+	# into systems/heightmap_io.gd. This function keeps responsibility
+	# for the side effects (writing height_data, triggering
+	# initialize_terrain, emitting the large-heightmap nudge) while the
+	# pure conversion lives in HeightmapIO.
+	var heights: PackedFloat32Array = HeightmapIO.convert_texture_to_heights(import_texture, map_size, import_max_height)
+	if heights.is_empty():
+		# HeightmapIO returns empty on null/invalid input or buffer mismatch.
+		# Silently bail — the caller already validated import_texture.
+		return
+	height_data = heights
 	var total: int = map_size * map_size
-	var inv255: float = import_max_height / 255.0
-	# Single-axis loop — flat over the byte array, no per-pixel Color
-	# allocation. Bytes are stored row-major, exactly matching our
-	# height_data layout (z * map_size + x = pixel index).
-	for i in range(total):
-		height_data[i] = float(raw[i * 4]) * inv255
 	initialize_terrain()
 	# Nudge the user toward external storage for big imports. We don't
 	# auto-externalize because that would write a .res file as a side
