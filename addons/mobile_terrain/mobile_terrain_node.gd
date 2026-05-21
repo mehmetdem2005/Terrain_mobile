@@ -2133,27 +2133,13 @@ func _paint_splatmap(cx: float, cz: float, radius: float, strength: float):
 		TerrainDiagnostics.error(TerrainDiagnostics.E_SPLATMAP_SIZE_DRIFT, [img.get_width(), img.get_height(), map_size])
 		return
 
-	# V22 Phase 4: route through BrushSystem.iterate_footprint so the
-	# loop bounds and mask sampling are shared with the sculpt ops.
-	# Competitive blend (shrink-all then boost-target) keeps the splatmap
-	# normalised without an explicit divide.
+	# TKT-003 Phase A.1: paint algorithm extracted into systems/splatmap_system.gd
+	# (pure, unit-testable). This function keeps responsibility for state —
+	# which Image is active, when to flush bytes to GPU, when to rebind
+	# the shader uniform — while the per-pixel competitive blend math
+	# lives in SplatmapSystem.paint.
 	var brush := BrushSystem.new(map_size, brush_mask, _brush_mask_image, brush_shape, noise_gen)
-	var slot: int = current_paint_slot
-	brush.iterate_footprint(cx, cz, radius, func(x: int, z: int, falloff: float) -> void:
-		var color: Color = img.get_pixel(x, z)
-		var blend_factor: float = clampf(strength * falloff, 0.0, 1.0)
-		var inv: float = 1.0 - blend_factor
-		color.r *= inv
-		color.g *= inv
-		color.b *= inv
-		color.a *= inv
-		match slot:
-			0: color.r += blend_factor
-			1: color.g += blend_factor
-			2: color.b += blend_factor
-			3: color.a += blend_factor
-		img.set_pixel(x, z, color)
-	)
+	SplatmapSystem.paint(img, map_size, cx, cz, radius, strength, current_paint_slot, brush)
 
 	# V22: null guard. splatmap_texture_local can be nulled between
 	# start_stroke and now in pathological cases (eg user resized map
