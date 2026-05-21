@@ -1,0 +1,15 @@
+# Godot editor caches
+.godot/
+.import/
+*.translation
+
+# Per-fixture generated test artifacts
+test/fixtures/*/.godot/
+test/fixtures/*/test_terrain_*.tscn
+test/fixtures/*/test_terrain*.res
+test/fixtures/*/integration_tests
+test/fixtures/*/addons/mobile_terrain
+
+# OS junk
+.DS_Store
+Thumbs.db

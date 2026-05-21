@@ -50,12 +50,11 @@ var brush_enabled: bool = true
 #   1. user hits Ctrl+S
 #   2. Godot serialises the scene → .tscn written with inline 26 MB
 #   3. Godot calls our _save_external_data → too late
-# Our workaround: in step 3 we wipe the data, write the .res, then
-# trigger a SECOND save_scene programmatically. That second pass writes
-# the .tscn with the now-empty inline fields (small file). The flag
-# below prevents the recursion: when the second save fires
-# _save_external_data again, we just restore and exit.
-var _suppress_next_save_hook: bool = false
+# V22 Plan B fixes this by bypassing EditorInterface entirely:
+# TerrainSaveOrchestrator packs the live scene + writes the .tscn
+# ourselves with the heavy fields wiped first. See
+# editor/save_orchestrator.gd.
+var _save_orchestrator: TerrainSaveOrchestrator = null
 var brush_toggle_btn: Button
 # V21 FIX: cache the most recent editor camera so we can re-raycast on
 # brush-toggle-on without depending on the EditorInterface API
@@ -1567,84 +1566,22 @@ func _handles(object: Object) -> bool:
 # externalisation (e.g. unsaved scene) shouldn't block the .tscn save;
 # the node just stays inline for that pass.
 func _save_external_data() -> void:
-	# V22 PLAN B SAVE FLOW
-	# ====================
-	# Godot 4.6 calls this hook AFTER the .tscn is already on disk, and
-	# _validate_property's NOSTORE toggle is ignored by the serializer.
-	# Previous "Approach 3" tried EditorInterface.save_scene() as a second
-	# pass with the heavy data wiped, but the deferred re-entry was racy
-	# and the user's logs showed _perform_resave never firing.
-	#
-	# Plan B: bypass EditorInterface entirely. Pack the live scene tree
-	# into a fresh PackedScene and write it via ResourceSaver. With the
-	# heavy fields wiped before pack(), the resulting .tscn is small.
-	# Deterministic, single-pass, no re-entrancy, no suppress flag dance.
+	# V22: delegates to TerrainSaveOrchestrator (Plan B). All the .res
+	# externalisation + PackedScene.pack + ResourceSaver.save logic lives
+	# in editor/save_orchestrator.gd so it can be unit-tested in isolation.
 	var ei := get_editor_interface()
 	if ei == null:
 		return
-	var edited_root: Node = ei.get_edited_scene_root()
-	if edited_root == null:
+	var root: Node = ei.get_edited_scene_root()
+	if root == null:
 		return
-	var scene_path: String = edited_root.scene_file_path
-	if scene_path == "":
-		# Unsaved scene — Godot still calls this hook, but we have nothing
-		# to rewrite. The terrain stays inline for this pass; user must
-		# save the scene to a file at least once for externalisation.
-		return
-	var terrains: Array = []
-	_collect_terrains(edited_root, terrains)
-	if terrains.is_empty():
-		return
-	# Phase 1: externalise qualifying terrains and snapshot the live heavy
-	# data so we can wipe before packing without losing in-memory state.
-	var backups: Array = []
-	for terrain in terrains:
-		if not is_instance_valid(terrain):
-			continue
-		var threshold: int = TerrainNode.AUTO_EXTERNALIZE_THRESHOLD
-		var size_qualifies: bool = terrain.height_data.size() >= threshold
-		var path_set: bool = terrain.external_data_path != ""
-		var res_missing: bool = path_set and not ResourceLoader.exists(terrain.external_data_path)
-		if size_qualifies and (not path_set or res_missing):
-			if res_missing:
-				terrain._suppress_external_path_setter = true
-				terrain.external_data_path = ""
-				terrain._suppress_external_path_setter = false
-			terrain._externalize_data(true)
-		if terrain.external_data_path != "" and terrain.height_data.size() > 0:
-			backups.append({
-				"node": terrain,
-				"height_data": terrain.height_data,
-				"splatmap_texture_local": terrain.splatmap_texture_local,
-			})
-			terrain.height_data = PackedFloat32Array()
-			terrain.splatmap_texture_local = null
-	# Phase 2: pack and rewrite the .tscn ourselves. We don't go through
-	# EditorInterface.save_scene because that re-enters this very hook.
-	if not backups.is_empty():
-		var packed := PackedScene.new()
-		var pack_err := packed.pack(edited_root)
-		if pack_err == OK:
-			var save_err := ResourceSaver.save(packed, scene_path)
-			if save_err != OK:
-				push_warning("MT-002: ResourceSaver.save failed for '%s' (err=%d)" % [scene_path, save_err])
-		else:
-			push_warning("MT-001: PackedScene.pack failed for '%s' (err=%d)" % [scene_path, pack_err])
-	# Phase 3: restore live state so the editor stays renderable. Deferred
-	# so any pending engine save flush completes before we mutate again.
-	if not backups.is_empty():
-		call_deferred("_restore_after_save", backups)
+	if _save_orchestrator == null:
+		_save_orchestrator = TerrainSaveOrchestrator.new()
+	_save_orchestrator.save_with_externalized_terrains(root, self)
 
-# Depth-first walk. Pushes every TerrainNode in the tree into `out`.
-func _collect_terrains(node: Node, out: Array) -> void:
-	if node is TerrainNode:
-		out.append(node)
-	for child in node.get_children():
-		_collect_terrains(child, out)
-
-# Restore live heavy data cleared in _save_external_data. Called deferred
-# so the small .tscn ResourceSaver flush completes first.
-func _restore_after_save(backups: Array) -> void:
+# Restore callback invoked deferred by TerrainSaveOrchestrator so the
+# small .tscn ResourceSaver flush completes before live state mutates.
+func _terrain_restore_callback(backups: Array) -> void:
 	for entry in backups:
 		if not entry.has("node"):
 			continue

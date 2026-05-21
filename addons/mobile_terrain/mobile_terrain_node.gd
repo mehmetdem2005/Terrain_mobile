@@ -452,6 +452,12 @@ func _initialize_splatmap():
 	var img := Image.create_from_data(map_size, map_size, false, Image.FORMAT_RGBA8, splatmap_data)
 	splatmap_texture_local = ImageTexture.create_from_image(img)
 
+## V22: TERRAIN_SHADER moved to shaders/terrain.gdshader. See
+## _setup_default_shader for the load path. Kept here as a fallback
+## inline string so addons enabled without a full project import (e.g.
+## drag-dropped into a fresh project before res:// scan) still get a
+## working shader. The .gdshader file is the source of truth — any edit
+## must mirror to both.
 const TERRAIN_SHADER = """
 shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_schlick_ggx;
@@ -742,9 +748,17 @@ func _setup_default_shader():
 				break
 		needs_refresh = not has_new_uniform
 	if needs_refresh:
-		var shader = Shader.new()
-		shader.code = TERRAIN_SHADER
-		smat.shader = shader
+		# V22: prefer the standalone .gdshader file. Falls back to the
+		# inline string if the resource isn't reachable (e.g. addon dropped
+		# in before project import had time to register the new file).
+		const SHADER_PATH := "res://addons/mobile_terrain/shaders/terrain.gdshader"
+		var loaded := load(SHADER_PATH)
+		if loaded is Shader:
+			smat.shader = loaded
+		else:
+			var shader = Shader.new()
+			shader.code = TERRAIN_SHADER
+			smat.shader = shader
 	update_shader_textures()
 	# V21: removed `slope_rock_factor` shader parameter set — the new
 	# shader no longer uses it. The @export property survives for
@@ -1793,144 +1807,9 @@ func _get_or_create_multimesh(target_mesh: Mesh) -> MultiMeshInstance3D:
 	return mmi
 
 func get_intersection_raymarch_persistent(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
-	var from = camera.project_ray_origin(screen_pos)
-	var dir = camera.project_ray_normal(screen_pos)
-	# V20 FIX: 1-unit step (was 2.0).
-	#
-	# The old step of `dir * 2.0` advanced two cells per iteration, which
-	# could skip ridges and thin peaks entirely. Worst case: ray sampled
-	# cell A (above terrain), skipped over a peak cell, sampled cell C
-	# (also above on the far side) — the peak was never tested and the
-	# ray either kept going past it or fell into a wrong cell.
-	#
-	# Heights are stored per-vertex (one value per cell), so the smallest
-	# meaningful step is 1 unit. Anything coarser is a sampling bug:
-	# you'd be asking "is the ray below cell N's height?" while skipping
-	# half the cells between N and the next sample.
-	#
-	# A proper grid DDA traversal would be more efficient (each crossed
-	# cell sampled exactly once regardless of ray angle, with a bounded
-	# iteration count of ~2*map_size) but adds significant code surface
-	# — t_max/t_delta state per axis, vertical-ray edge cases, etc. For
-	# editor-only raymarch running at mouse-move frequency, the simple
-	# 1-unit step is correct and fast enough. Switch to DDA if profiling
-	# ever shows raymarch as a mobile hotspot.
-	#
-	# V21 ADAPTIVE RANGE: cap iteration count by camera-to-terrain
-	# distance, not a hard 500. With the old constant, a camera placed
-	# more than 500 units from the terrain would silently miss EVERY
-	# click — the ray ran out of iterations before reaching the surface.
-	# Users on large terrains zoom out, then "brush stops working" with
-	# no error. Now we compute a max-distance budget from the bounding
-	# diagonal of the terrain plus some headroom; gives correct behaviour
-	# at any zoom level. Capped at 8000 to bound worst-case cost.
-	var ray_step = dir
-	var march_pos = from
-	var hit_pos = Vector3.INF
-	# Diagonal of the terrain bbox (in world units, height_data is 1 unit
-	# per cell). Plus camera distance gets us through any aerial view.
-	var diag: float = sqrt(2.0) * float(map_size)
-	var cam_to_origin: float = (from - global_position).length()
-	var max_iters: int = mini(8000, int(diag + cam_to_origin + 100.0))
-	
-	# V20 FIX: Use floori() instead of int() for world→grid conversion.
-	#
-	# int(x) truncates toward zero: int(-0.3) == 0. That's wrong for grid
-	# coords — a march position 0.3 units WEST of the terrain has local
-	# x = -0.3, which floor()-style should map to grid cell -1 (outside
-	# the map). But int() collapses it to 0, the "lx >= 0" guard below
-	# passes, and we sample get_height(0, lz) — producing a SPURIOUS hit
-	# at a position that's actually off the terrain.
-	#
-	# This only manifests when the terrain has a non-integer global_position
-	# or the user clicks very close to the western/southern edge. Rare
-	# in practice, mysterious when it bites ("why did this object spawn
-	# 0.3 units in mid-air past the edge?").
-	#
-	# floori() is the built-in floor-as-int: floori(-0.3) == -1, which
-	# the bounds check then correctly rejects.
-	#
-	# Note: in the binary search and normal calc below, get_height does
-	# its own clampi(), so int() vs floori() there produces the same
-	# observable result. Converting them anyway for consistency — mixing
-	# the two conversions in one function is a future-bug invitation.
-	# V21: scan the heightmap once to find the lowest cell — early termination
-	# below that is safe (no terrain to hit). Caches at function scope to
-	# avoid scanning every raymarch call; the min height is a cheap fold
-	# but ~1.5M cells on a 1254² map is still 10-15ms in GDScript. We just
-	# use a conservative -200 floor relative to global_position.y; if the
-	# user has terrain dropping more than 200 units below origin they'll
-	# need to scroll closer.
-	# (A proper fix would maintain a `_min_height` cached field updated on
-	# sculpt, but for now the conservative bound is cheap and correct.)
-	var early_term_y: float = global_position.y - 200.0
-	
-	for i in range(max_iters):
-		var lx = floori(march_pos.x - global_position.x)
-		var lz = floori(march_pos.z - global_position.z)
-		if lx >= 0 and lx < map_size and lz >= 0 and lz < map_size:
-			if march_pos.y <= get_height(lx, lz) + global_position.y:
-				# V21 EDGE CASE: if i == 0, the camera started BELOW the
-				# terrain — no genuine crossing happened, we're inside the
-				# heightfield. Returning march_pos here would give a hit
-				# at the ray origin, which is wrong. Skip and let the
-				# normal march continue; it'll exit out the bottom and
-				# return INF (which the caller treats as "no hit").
-				if i == 0:
-					march_pos += ray_step
-					if march_pos.y < early_term_y: break
-					continue
-				var p_start = march_pos - ray_step
-				var p_end = march_pos
-				for j in range(5):
-					var mid = (p_start + p_end) * 0.5
-					# V21 BINARY SEARCH GUARD: clamp mid's grid coords to
-					# the valid range before sampling. If the binary
-					# search points crossed the terrain boundary (rare
-					# but possible at oblique angles near the edge),
-					# floori(...) could go negative — get_height's clampi
-					# protects against crash but the wrong cell's height
-					# would converge the search to a spurious surface.
-					# We just bail out of the refinement and use the
-					# original midpoint instead.
-					var mid_lx = floori(mid.x - global_position.x)
-					var mid_lz = floori(mid.z - global_position.z)
-					if mid_lx < 0 or mid_lx >= map_size or mid_lz < 0 or mid_lz >= map_size:
-						break
-					var h = height_data[mid_lz * map_size + mid_lx] + global_position.y
-					if mid.y <= h:
-						p_end = mid
-					else:
-						p_start = mid
-				hit_pos = p_end
-				break
-		march_pos += ray_step
-		if march_pos.y < early_term_y:
-			break
-		
-	if hit_pos != Vector3.INF:
-		var lx = floori(hit_pos.x - global_position.x)
-		var lz = floori(hit_pos.z - global_position.z)
-		# V21: inline-clamp neighbour reads to dodge get_height's function-
-		# call overhead. Same pattern as in update_chunk_mesh.
-		var max_idx: int = map_size - 1
-		# Clamp the center first (defensive; hit_pos should always be
-		# inside the valid range but binary-search edge cases above
-		# could put us one cell out).
-		lx = clampi(lx, 0, max_idx)
-		lz = clampi(lz, 0, max_idx)
-		var nxL: int = lx - 1 if lx > 0 else 0
-		var nxR: int = lx + 1 if lx < max_idx else max_idx
-		var nzD: int = lz - 1 if lz > 0 else 0
-		var nzU: int = lz + 1 if lz < max_idx else max_idx
-		var hL: float = height_data[lz * map_size + nxL]
-		var hR: float = height_data[lz * map_size + nxR]
-		var hD: float = height_data[nzD * map_size + lx]
-		var hU: float = height_data[nzU * map_size + lx]
-		var norm = Vector3(hL - hR, 2.0, hD - hU).normalized()
-		return {"pos": hit_pos, "normal": norm}
-	else:
-		return {"pos": Vector3.INF, "normal": Vector3.UP}
+	# V22: delegated to TerrainRaymarchSystem so the algorithm can be
+	# unit-tested without spinning up the whole terrain node.
+	return TerrainRaymarchSystem.intersect(camera, screen_pos, height_data, map_size, global_position)
 
 func start_stroke(): 
 	last_sculpt_pos = Vector3.INF
