@@ -1,0 +1,10 @@
+config_version=5
+
+[application]
+config/name="MobileTerrain3D ParseCheck"
+config/features=PackedStringArray("4.6", "Forward Plus")
+run/main_scene=""
+
+[rendering]
+renderer/rendering_method="mobile"
+renderer/rendering_method.mobile="mobile"

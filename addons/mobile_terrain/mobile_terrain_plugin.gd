@@ -100,9 +100,6 @@ func _get_plugin_name() -> String:
 	return "MobileTerrain3D"
 
 func _enter_tree() -> void:
-	print("=== [MobileTerrain3D] Plugin _enter_tree() FIRED ===")
-	print("[MobileTerrain3D] If you see this, the plugin is loaded.")
-	print("[MobileTerrain3D] On scene save, you should see _save_external_data() fire too.")
 	undo_redo = get_undo_redo()
 	add_custom_type("MobileTerrain3D", "Node3D", TerrainNode, null)
 	
@@ -1058,7 +1055,7 @@ func _add_texture_slot():
 	# place to lift.
 	const MAX_PAINT_SLOTS := 4
 	if selected_node.terrain_textures.size() >= MAX_PAINT_SLOTS:
-		print("[MobileTerrain3D] En fazla %d doku slot'u olabilir (splatmap RGBA, 4 kanal). Yeni doku eklemek için önce bir slot'u boşalt ve değiştir." % MAX_PAINT_SLOTS)
+		push_warning("MT-W03: En fazla %d doku slot'u olabilir (splatmap RGBA, 4 kanal). Önce bir slot'u boşalt ve değiştir." % MAX_PAINT_SLOTS)
 		return
 	selected_node.terrain_textures.append(null)
 	# V21: keep PBR arrays in lockstep with the albedo array.
@@ -1215,11 +1212,11 @@ func _auto_detect_maps(slot_idx: int) -> void:
 	if slot_idx >= selected_node.terrain_textures.size(): return
 	var albedo: Texture2D = selected_node.terrain_textures[slot_idx]
 	if albedo == null:
-		print("[MobileTerrain3D] Slot %d: önce Albedo texture'ını seç, sonra Tespit'e bas." % slot_idx)
+		push_warning("MT-W04: Slot %d: önce Albedo texture'ını seç, sonra Tespit'e bas." % slot_idx)
 		return
 	var albedo_path := albedo.resource_path
 	if albedo_path.is_empty():
-		print("[MobileTerrain3D] Slot %d: Albedo texture'ın bir disk yolu yok (built-in resource olabilir), otomatik tespit atlandı." % slot_idx)
+		push_warning("MT-W05: Slot %d: Albedo texture'ın disk yolu yok (built-in resource olabilir), otomatik tespit atlandı." % slot_idx)
 		return
 	
 	var detected := _detect_sibling_maps(albedo_path)
@@ -1248,12 +1245,8 @@ func _auto_detect_maps(slot_idx: int) -> void:
 		filled.append("Emission: " + (detected["emission"] as Texture2D).resource_path)
 	
 	if filled.is_empty():
-		print("[MobileTerrain3D] Slot %d: '%s' için kardeş map bulunamadı. Albedo'nun '_diff' / '_albedo' / '_color' gibi bir marker içerdiğinden emin ol." % [slot_idx, albedo_path.get_file()])
+		push_warning("MT-W06: Slot %d: '%s' için kardeş map bulunamadı. Albedo'nun '_diff' / '_albedo' / '_color' marker içerdiğinden emin ol." % [slot_idx, albedo_path.get_file()])
 		return
-	
-	print("[MobileTerrain3D] Slot %d için otomatik tespit:" % slot_idx)
-	for s in filled:
-		print("  ✓ " + s)
 	selected_node.update_shader_textures()
 	_refresh_manager_ui()
 	_save_selected_scene()
@@ -1574,165 +1567,98 @@ func _handles(object: Object) -> bool:
 # externalisation (e.g. unsaved scene) shouldn't block the .tscn save;
 # the node just stays inline for that pass.
 func _save_external_data() -> void:
-	# Debug trace — print to Output is fine (silent unless user opens
-	# the panel), push_warning was popping the Debugger on every save
-	# even for scenes without our node, which is bad UX.
-	print("=== [MobileTerrain3D] _save_external_data() FIRED ===")
-	# V21 RE-SAVE GUARD: if this is the second save we triggered ourselves
-	# (after wiping the heavy data), don't recurse. Just clear the flag,
-	# restore the data, and exit.
-	if _suppress_next_save_hook:
-		print("[MobileTerrain3D] Suppressed (this is our re-save pass). Skipping externalise; restore queued.")
-		_suppress_next_save_hook = false
-		return
+	# V22 PLAN B SAVE FLOW
+	# ====================
+	# Godot 4.6 calls this hook AFTER the .tscn is already on disk, and
+	# _validate_property's NOSTORE toggle is ignored by the serializer.
+	# Previous "Approach 3" tried EditorInterface.save_scene() as a second
+	# pass with the heavy data wiped, but the deferred re-entry was racy
+	# and the user's logs showed _perform_resave never firing.
+	#
+	# Plan B: bypass EditorInterface entirely. Pack the live scene tree
+	# into a fresh PackedScene and write it via ResourceSaver. With the
+	# heavy fields wiped before pack(), the resulting .tscn is small.
+	# Deterministic, single-pass, no re-entrancy, no suppress flag dance.
 	var ei := get_editor_interface()
 	if ei == null:
-		push_warning("[MobileTerrain3D] get_editor_interface() returned null. Cannot externalise.")
 		return
 	var edited_root: Node = ei.get_edited_scene_root()
 	if edited_root == null:
-		push_warning("[MobileTerrain3D] edited_scene_root is null. Save before externalising.")
 		return
-	print("[MobileTerrain3D] Edited root: %s (%s)" % [edited_root.name, edited_root.get_class()])
-	# Recursive walk — terrain might be deeply nested inside the scene.
-	# We collect terrains first (don't mutate during traversal) so the
-	# wipe/restore phases below can iterate the same list deterministically.
+	var scene_path: String = edited_root.scene_file_path
+	if scene_path == "":
+		# Unsaved scene — Godot still calls this hook, but we have nothing
+		# to rewrite. The terrain stays inline for this pass; user must
+		# save the scene to a file at least once for externalisation.
+		return
 	var terrains: Array = []
 	_collect_terrains(edited_root, terrains)
-	print("[MobileTerrain3D] Found %d MobileTerrain3D node(s) in the scene." % terrains.size())
 	if terrains.is_empty():
-		# Silent return — this hook fires for EVERY scene save, including
-		# ones with no terrain. Pushing a warning here would spam the
-		# debugger every time the user saves an unrelated scene.
 		return
-	# Phase 1: write .res files and figure out which terrains need wipe-and-resave.
+	# Phase 1: externalise qualifying terrains and snapshot the live heavy
+	# data so we can wipe before packing without losing in-memory state.
 	var backups: Array = []
 	for terrain in terrains:
+		if not is_instance_valid(terrain):
+			continue
 		var threshold: int = TerrainNode.AUTO_EXTERNALIZE_THRESHOLD
 		var size_qualifies: bool = terrain.height_data.size() >= threshold
 		var path_set: bool = terrain.external_data_path != ""
 		var res_missing: bool = path_set and not ResourceLoader.exists(terrain.external_data_path)
-		print("[MobileTerrain3D] '%s': height_data.size=%d, threshold=%d, qualifies=%s, path='%s', path_set=%s, res_missing=%s" % [
-			terrain.name, terrain.height_data.size(), threshold, size_qualifies,
-			terrain.external_data_path, path_set, res_missing
-		])
 		if size_qualifies and (not path_set or res_missing):
 			if res_missing:
-				print("[MobileTerrain3D] External .res missing for '%s'; re-saving to prevent data loss." % terrain.name)
-				# V21: suppress setter cascade — we don't want to trigger
-				# a load attempt on the just-cleared empty path. The
-				# subsequent _externalize_data call will derive a fresh
-				# target_path from the scene file.
 				terrain._suppress_external_path_setter = true
 				terrain.external_data_path = ""
 				terrain._suppress_external_path_setter = false
-			else:
-				print("[MobileTerrain3D] Auto-externalising '%s' (%d cells) to .res file..." % [terrain.name, terrain.height_data.size()])
 			terrain._externalize_data(true)
-			print("[MobileTerrain3D] After externalise: external_data_path='%s'" % terrain.external_data_path)
 		if terrain.external_data_path != "" and terrain.height_data.size() > 0:
-			print("[MobileTerrain3D] '%s': backing up %d cells, clearing in-memory for re-save..." % [terrain.name, terrain.height_data.size()])
 			backups.append({
 				"node": terrain,
 				"height_data": terrain.height_data,
 				"splatmap_texture_local": terrain.splatmap_texture_local,
-				"scene_file_path": edited_root.scene_file_path,
 			})
 			terrain.height_data = PackedFloat32Array()
 			terrain.splatmap_texture_local = null
-		else:
-			print("[MobileTerrain3D] '%s': not eligible for in-memory wipe (path='%s', size=%d)." % [
-				terrain.name, terrain.external_data_path, terrain.height_data.size()
-			])
-	# V21 CRITICAL: Godot has ALREADY written the bloated .tscn by the time
-	# this hook fires (4.6 behaviour, confirmed empirically: _validate_property
-	# is called pre-save with the wrong external_data_path, then we get
-	# called post-save with the right value but the .tscn is already on disk).
-	#
-	# To produce a small .tscn we trigger a second save_scene, this time
-	# with the heavy data wiped from the live nodes. Set the suppress flag
-	# first so the second save's hook call doesn't re-trigger the dance.
+	# Phase 2: pack and rewrite the .tscn ourselves. We don't go through
+	# EditorInterface.save_scene because that re-enters this very hook.
 	if not backups.is_empty():
-		var scene_path: String = edited_root.scene_file_path
-		if scene_path != "":
-			print("[MobileTerrain3D] Triggering second save_scene to write small .tscn ('%s')..." % scene_path)
-			_suppress_next_save_hook = true
-			# call_deferred so this save runs after the current hook returns
-			# and Godot finishes its current save flow.
-			call_deferred("_perform_resave", scene_path, backups)
+		var packed := PackedScene.new()
+		var pack_err := packed.pack(edited_root)
+		if pack_err == OK:
+			var save_err := ResourceSaver.save(packed, scene_path)
+			if save_err != OK:
+				push_warning("MT-002: ResourceSaver.save failed for '%s' (err=%d)" % [scene_path, save_err])
 		else:
-			push_warning("[MobileTerrain3D] Scene has no file path; cannot perform re-save. Inline data WILL remain in .tscn until you save again.")
-			# Restore anyway so terrain isn't blank.
-			call_deferred("_restore_after_save", backups)
-	else:
-		print("[MobileTerrain3D] No backups to restore — done.")
-	print("=== [MobileTerrain3D] _save_external_data() RETURNING ===")
+			push_warning("MT-001: PackedScene.pack failed for '%s' (err=%d)" % [scene_path, pack_err])
+	# Phase 3: restore live state so the editor stays renderable. Deferred
+	# so any pending engine save flush completes before we mutate again.
+	if not backups.is_empty():
+		call_deferred("_restore_after_save", backups)
 
-# V21: helper called via call_deferred from _save_external_data. Saves
-# the scene a second time (with heavy data already wiped from the live
-# nodes), then queues the data restoration. Split out so the deferred
-# call's signature stays simple.
-func _perform_resave(scene_path: String, backups: Array) -> void:
-	print("=== [MobileTerrain3D] _perform_resave() FIRED for '%s' ===" % scene_path)
-	var ei := get_editor_interface()
-	if ei == null:
-		push_warning("[MobileTerrain3D] No editor interface during re-save. Restoring without re-save.")
-		# V21 CRITICAL: clear the suppress flag even on the failure path.
-		# Without this, the flag stays true forever and the NEXT user save
-		# silently skips externalisation — exact opposite of what we want.
-		_suppress_next_save_hook = false
-		_restore_after_save(backups)
-		return
-	# EditorInterface.save_scene saves the currently-edited scene. We
-	# could use save_scene_as(scene_path) but save_scene avoids the
-	# "save as" overhead and keeps the path stable.
-	var save_succeeded := false
-	if ei.has_method("save_scene"):
-		var err = ei.save_scene()
-		print("[MobileTerrain3D] save_scene() returned: %s" % str(err))
-		# err could be Error enum or null; treat anything other than OK as fail.
-		save_succeeded = (err == OK or err == null)
-	else:
-		push_warning("[MobileTerrain3D] EditorInterface.save_scene not available; small .tscn won't be written.")
-	# V21 SAFETY: If save_scene synchronously triggered _save_external_data
-	# (the recursive call we suppressed via the flag), the flag was already
-	# cleared inside the suppressed branch. But if save_scene FAILED before
-	# reaching that point, the flag never got cleared. Force-clear here as
-	# a backstop — at worst this means one redundant clear, never a stuck
-	# flag that disables externalisation for the rest of the session.
-	_suppress_next_save_hook = false
-	# Restore in another deferred call so the second save flushes to disk first.
-	call_deferred("_restore_after_save", backups)
-	print("=== [MobileTerrain3D] _perform_resave() DONE (save_succeeded=%s) ===" % save_succeeded)
-
-# Helper for the depth-first walk. Pushes every TerrainNode in the tree
-# into `out` without mutating the tree.
+# Depth-first walk. Pushes every TerrainNode in the tree into `out`.
 func _collect_terrains(node: Node, out: Array) -> void:
 	if node is TerrainNode:
 		out.append(node)
 	for child in node.get_children():
 		_collect_terrains(child, out)
 
-# Restore the live heavy data we cleared in _save_external_data. Called
-# via call_deferred so the .tscn save has finished writing first.
+# Restore live heavy data cleared in _save_external_data. Called deferred
+# so the small .tscn ResourceSaver flush completes first.
 func _restore_after_save(backups: Array) -> void:
-	print("=== [MobileTerrain3D] _restore_after_save() FIRED with %d backup(s) ===" % backups.size())
 	for entry in backups:
+		if not entry.has("node"):
+			continue
 		var terrain = entry["node"]
 		if not is_instance_valid(terrain):
-			push_warning("[MobileTerrain3D] Restore target no longer valid; skipping.")
 			continue
-		print("[MobileTerrain3D] Restoring '%s': %d cells back into memory." % [terrain.name, entry["height_data"].size()])
-		terrain.height_data = entry["height_data"]
-		terrain.splatmap_texture_local = entry["splatmap_texture_local"]
-		# Trigger a mesh rebuild so the visual catches up. Without this
-		# the terrain would render blank until the next user action that
-		# happens to mark chunks dirty.
+		if entry.has("height_data"):
+			terrain.height_data = entry["height_data"]
+		if entry.has("splatmap_texture_local"):
+			terrain.splatmap_texture_local = entry["splatmap_texture_local"]
 		if terrain.has_method("force_update_all"):
 			terrain.force_update_all()
 		if terrain.has_method("force_refresh_splatmap"):
 			terrain.force_refresh_splatmap()
-	print("=== [MobileTerrain3D] _restore_after_save() DONE ===")
 
 func _edit(object: Object) -> void:
 	# V21: finalise any in-progress stroke under the OLD node BEFORE we
@@ -1953,32 +1879,35 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 		return EditorPlugin.AFTER_GUI_INPUT_PASS
 
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		# V22 FIX: raycast BEFORE start_stroke(). A miss used to open a
+		# stroke (allocating a paint-cache image) and then return without
+		# ever closing it — leaving the cache pointing at the now-stale
+		# splatmap image. Subsequent strokes on a different tool would
+		# write through the stale reference and corrupt splatmap_data.
+		# Now we only commit to a stroke once the cursor actually hits
+		# the terrain.
+		var result = selected_node.get_intersection_raymarch_persistent(camera, event.position)
+		if typeof(result) != TYPE_DICTIONARY or result.pos == Vector3.INF:
+			# Click landed off the terrain. Do nothing.
+			return EditorPlugin.AFTER_GUI_INPUT_PASS
+
 		is_sculpting = true
-		# V20 FIX: clear placement records on every stroke start (even
-		# non-object strokes) so leftover state from a previously
-		# interrupted object stroke can't leak into the new one.
+		# Clear placement records on every stroke start (non-object strokes
+		# included) so leftover state from a previously interrupted object
+		# stroke can't leak into the new one.
 		placement_records.clear()
 		placement_initial_counts.clear()
-		
-		# V20 FIX (#15): clear backups but DON'T duplicate yet. The old code
-		# eagerly cloned the full 256KB height_data (or splatmap_data) on
-		# every mouse-down — even when the click landed on empty space
-		# (raymarch miss) or the user released without dragging. We now
-		# snapshot lazily inside `_ensure_backup_for_current_tool()`, which
-		# runs immediately before each brush call. Clicks that never
-		# actually modify terrain state now cost zero memory AND skip
-		# creating the matching no-op undo entry (the mouse-up branch
-		# checks `backup.size() > 0` to decide whether to record undo).
+		# Backup buffers are filled lazily by _ensure_backup_for_current_tool
+		# on the first dab that actually modifies the terrain. Clicks on
+		# empty space therefore cost zero memory and skip recording an
+		# empty undo entry.
 		splatmap_backup = PackedByteArray()
 		heightmap_backup = PackedFloat32Array()
-		
+
 		selected_node.start_stroke()
-		
-		var result = selected_node.get_intersection_raymarch_persistent(camera, event.position)
-		if typeof(result) == TYPE_DICTIONARY and result.pos != Vector3.INF:
-			_conform_decal_to_surface(result.pos)
-			_ensure_backup_for_current_tool()
-			selected_node.apply_brush_stroke_slope(result.pos, result.normal)
+		_conform_decal_to_surface(result.pos)
+		_ensure_backup_for_current_tool()
+		selected_node.apply_brush_stroke_slope(result.pos, result.normal)
 		return EditorPlugin.AFTER_GUI_INPUT_STOP
 		
 	elif event is InputEventMouseButton and not event.pressed and event.button_index == MOUSE_BUTTON_LEFT:

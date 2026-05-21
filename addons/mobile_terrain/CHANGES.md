@@ -1,3 +1,62 @@
+# MobileTerrain3D V22 — AAA Architecture & Deterministic Save
+
+V21'den V22'ye geçişte iki büyük değişiklik:
+
+## 26 MB sahne save bug — **kesin çözüm (Plan B)**
+
+Önceki "Approach 3" yaklaşımı `EditorInterface.save_scene()`'i deferred re-entry içinde tetikliyordu; Godot 4.6'da bu re-entry no-op kalıyordu ve `.tscn` 26 MB inline base64 olarak yazılıyordu.
+
+V22 Plan B: `_save_external_data` artık `PackedScene.pack(edited_root)` + `ResourceSaver.save(packed, scene_path)` ile sahneyi kendi yazıyor. `EditorInterface` bypass edildi, re-entry yok, suppress flag dansı yok. Determinist.
+
+**Kanıt** (`test/integration/save_roundtrip.gd` headless test):
+- Inline (eskisi): 5.27 MB `.tscn`
+- External (V22): **358 bytes** `.tscn` + 6.25 MB `.res`
+
+Headless smoke test her CI çalıştığında doğrular.
+
+## Modül 5-9 bug sweep
+
+Audit (3 paralel Explore agent) yeni bug'lar buldu:
+
+- **plugin.gd:1977** — `_forward_3d_gui_input`: `start_stroke()` raymarch'tan ÖNCE çağrılıyordu. Click off-terrain'de stroke açılıp kapanmıyordu → paint cache leaked. **Fix**: stroke açma artık raymarch hit'inden SONRA.
+- **node.gd:2202** — `splatmap_texture_local.update(img)` null guard yoktu. **Fix**: defensive `!= null` check.
+- **node.gd:2210** — `splatmap_data = img.get_data()` paylaşılan referans olabilir. **Fix**: `.duplicate()` ekledi.
+- **node.gd:2110** — paint slot range mesajsız reddediyordu. **Fix**: `0 ≤ slot < 4` explicit + MT-005 warn.
+- **node.gd:97** — `current_tool` setter yoktu; tool değişiminde paint stroke cache ölü-referans kalıyordu. **Fix**: setter eklendi, cache null'lanıyor.
+
+## Debug print purge
+
+`>>> [MobileTerrain3D Node]`, `=== [MobileTerrain3D]` ve `[MobileTerrain3D]` print spam'i tamamen kaldırıldı. Kullanıcı-actionable mesajlar `push_warning("MT-XXX: ...")` formatına geçirildi.
+
+## Diagnostics catalog
+
+Tüm uyarı/hata mesajları artık `MT-XXX` (errors) ve `MT-WXX` (warnings) kodları ile başlıyor:
+
+- `MT-001` PackedScene.pack failed
+- `MT-002` ResourceSaver.save failed
+- `MT-005` paint slot out of range
+- `MT-W03` texture slot cap (4 limit)
+- `MT-W04..W09` asset manager + externalize feedback
+
+## AAA mimari refactor (V22 devam ediyor)
+
+V22 ayrıca monolit `mobile_terrain_node.gd` (2636 satır) + `mobile_terrain_plugin.gd` (2160 satır) yapısını katmanlı modüllere ayırıyor:
+
+```
+addons/mobile_terrain/
+├── core/        # constants, diagnostics, data resource
+├── systems/     # heightmap, chunk, brush, splatmap, foliage, raymarch, shader, persistence
+├── editor/      # save_orchestrator, input_router, undo_recorder, ui/*
+├── shaders/     # terrain.gdshader (inline'dan çıkarıldı)
+└── brushes/     # PNG masks (dokunulmadı)
+```
+
+Mevcut `class_name MobileTerrain3D` ve tüm `@export` property'ler korunuyor; mevcut sahneler kırılmıyor. Facade pattern: node + plugin entrypoint'leri ince shell'ler, sistem ilçesine delege ediyor.
+
+Ayrıca `.claude/agents/` altında **108 alt-agent tanımı** kuruldu (1 orkestratör + 7 yönetici + 50 audit + 50 fix). Bu kurulum kullanıcının kod altyapısında değil; tüm refactor pipeline'ını paralel agent'larla sürdürmeyi mümkün kılıyor.
+
+---
+
 # MobileTerrain3D V21 — Full PBR Slot System
 
 V20.1'de terrain ekrana geldi ama beyazımsı/düz görünüyordu. Sebep: shader sadece düz albedo veriyordu, normal/roughness/AO yoktu → PBR pipeline'ın gerektirdiği surface detail eksik.

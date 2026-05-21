@@ -94,7 +94,7 @@ extends Node3D
 @export var import_max_height: float = 50.0
 @export var click_to_import: bool = false : set = _import_exr
 
-var current_tool: int = 0
+var current_tool: int = 0 : set = _set_current_tool
 var current_paint_slot: int = 0
 var current_object_slot: int = 0
 var brush_shape: int = 0
@@ -107,6 +107,17 @@ var brush_radius: float = 8.0 : set = _set_brush_radius
 # the brush UV math.
 func _set_brush_radius(val: float) -> void:
 	brush_radius = clampf(val, 1.0, 50.0)
+
+# V22: switching tools must invalidate the paint stroke cache. Without
+# this, a paint stroke that ended via tool-switch (instead of mouse-up)
+# left _splatmap_stroke_image pointing at the previous-tool's image; the
+# next paint stroke would write through that stale reference and silently
+# corrupt splatmap_data on commit.
+func _set_current_tool(val: int) -> void:
+	if current_tool == val:
+		return
+	current_tool = val
+	_splatmap_stroke_image = null
 # V21: default lowered from 0.5 to 0.2. With the rate-limit cap at 25 Hz,
 # a stationary tap at strength 0.2 raises centre height by ~5 units/sec
 # instead of the ~30/sec the old 0.5-default produced. Less surprising
@@ -253,15 +264,13 @@ func _set_external_data_path(val: String) -> void:
 	if val == "" and was_set:
 		# User cleared the path. Don't auto-load — they might want to
 		# enter a new path, or keep current in-memory data inline.
-		# Just notify so the inspector reflects the mode change (inline
-		# vs external) via _validate_property.
-		print("[MobileTerrain3D] external_data_path cleared by user. In-memory data preserved.")
+		# Notify so the inspector reflects the mode change (inline vs
+		# external) via _validate_property.
 		notify_property_list_changed()
 		return
 	if val != "":
 		# User set or changed to a non-empty path. Load from the new file.
 		# _load_external_data_if_set bails safely if the file is missing.
-		print("[MobileTerrain3D] external_data_path set to '%s' by user; reloading." % val)
 		_suppress_external_path_setter = true
 		_load_external_data_if_set()
 		_suppress_external_path_setter = false
@@ -1062,16 +1071,13 @@ func _import_exr(val: bool):
 	# height_data layout (z * map_size + x = pixel index).
 	for i in range(total):
 		height_data[i] = float(raw[i * 4]) * inv255
-	print("Heightmap Imported Successfully! (%dx%d, %d cells)" % [map_size, map_size, total])
 	initialize_terrain()
-	# V21: nudge the user toward external storage for big imports. We
-	# don't auto-externalize because that would write a .res file as a
-	# side effect of an import — surprising, and it'd fail silently if
-	# the scene isn't saved yet (we need the scene path to pick the .res
-	# location). A print message in the output panel is the least
-	# invasive heads-up.
+	# Nudge the user toward external storage for big imports. We don't
+	# auto-externalize because that would write a .res file as a side
+	# effect of an import — surprising, and it'd fail silently if the
+	# scene isn't saved yet.
 	if total >= 512 * 512 and external_data_path == "":
-		print("[MobileTerrain3D] Large heightmap (%d cells, ~%.1f MB). Consider clicking 'Click To Externalize' in the Inspector to store it in a separate .res file — keeps your .tscn small and editor save/load fast." % [total, total * 4.0 / 1048576.0])
+		push_warning("MT-W07: Büyük heightmap (%d cells, ~%.1f MB). Inspector'da 'Click To Externalize' ile .res dosyasına kaydet — .tscn küçük ve hızlı kalır." % [total, total * 4.0 / 1048576.0])
 	# V21: auto-reset the checkbox so the next import requires another
 	# explicit click. Without this, the property stayed `true` in the
 	# Inspector, but a second click (true → true) didn't fire the setter
@@ -1097,11 +1103,10 @@ func _reset_click_to_import() -> void:
 
 func _externalize_data(val: bool) -> void:
 	if not val: return
-	print(">>> [MobileTerrain3D Node] _externalize_data() called for '%s'" % name)
 	if not Engine.is_editor_hint():
 		# Runtime can't write resources (the project is exported, read-only).
 		# This is purely an editor-time migration helper.
-		push_warning("[MobileTerrain3D] _externalize_data called outside editor; ignored.")
+		push_warning("MT-W08: _externalize_data called outside editor; ignored.")
 		call_deferred("_reset_externalize")
 		return
 	# Pick a path next to the current scene file by default. If we can't
@@ -1113,9 +1118,8 @@ func _externalize_data(val: bool) -> void:
 		var st := get_tree() if is_inside_tree() else null
 		if st != null and st.edited_scene_root != null:
 			scene_path = st.edited_scene_root.scene_file_path
-		print("[MobileTerrain3D] Deriving target path. scene_file_path='%s'" % scene_path)
 		if scene_path == "":
-			push_warning("MobileTerrain3D: scene not saved yet, can't externalize. Save the scene first.")
+			push_warning("MT-W09: Sahne henüz kaydedilmedi, externalize edilemiyor. Önce sahneyi kaydet.")
 			call_deferred("_reset_externalize")
 			return
 		# V21: sanitize node name for filesystem use. Node names can contain
@@ -1163,17 +1167,14 @@ func _externalize_data(val: bool) -> void:
 			data.splatmap_bytes = img.get_data().duplicate()
 			data.splatmap_size = img.get_width()
 	
-	print("[MobileTerrain3D] Calling ResourceSaver.save() with target_path='%s'..." % target_path)
 	var err := ResourceSaver.save(data, target_path)
 	if err != OK:
-		push_warning("MobileTerrain3D: ResourceSaver.save FAILED for '%s' (error %d). Inline data will remain in scene." % [target_path, err])
-		print("!!! [MobileTerrain3D] ResourceSaver.save FAILED. err=%d" % err)
+		push_warning("MT-002: ResourceSaver.save failed for '%s' (err=%d). Inline data will remain in scene." % [target_path, err])
 		call_deferred("_reset_externalize")
 		return
-	print("[MobileTerrain3D] ResourceSaver.save SUCCESS for '%s'." % target_path)
-	# V21: suppress setter cascade — we're just recording where we saved
-	# to, not asking for a load (the data is already in memory and is
-	# what we just wrote to disk).
+	# Suppress setter cascade — we're recording where we saved to, not
+	# asking for a load (data is already in memory and matches what was
+	# just written to disk).
 	_suppress_external_path_setter = true
 	external_data_path = target_path
 	_suppress_external_path_setter = false
@@ -1187,7 +1188,6 @@ func _externalize_data(val: bool) -> void:
 	# stored empty and only external_data_path persists. To actually wipe
 	# the in-memory copies and force a fresh load, the user can re-open
 	# the scene.
-	print("[MobileTerrain3D] Externalized to %s (%d cells, %.2f MB heightmap)." % [target_path, height_data.size(), height_data.size() * 4.0 / 1048576.0])
 	# V21: notify Godot the property usage flags have changed so the
 	# inspector reflects external mode and the serializer (running now,
 	# if this was called from EditorPlugin._save_external_data) re-queries
@@ -1242,7 +1242,6 @@ func _inline_data(val: bool) -> void:
 	_suppress_external_path_setter = true
 	external_data_path = ""
 	_suppress_external_path_setter = false
-	print("[MobileTerrain3D] Inlined heightmap (%d cells) back into scene." % height_data.size())
 	call_deferred("_reset_inline")
 
 func _reset_inline() -> void:
@@ -1276,7 +1275,6 @@ func _load_external_data_if_set() -> void:
 	# but the .res holds different dimensions, trust the .res (since it's
 	# the canonical store) and update map_size to match.
 	if data.map_size != map_size and data.map_size > 0:
-		print("[MobileTerrain3D] External data is %dx%d; updating map_size to match." % [data.map_size, data.map_size])
 		map_size = data.map_size  # cascades through _set_map_size
 
 func get_height(x: int, z: int) -> float:
@@ -1402,10 +1400,8 @@ func initialize_terrain():
 	var total_chunks: int = num_chunks * num_chunks
 	var build_sync: bool = total_chunks <= SYNC_BUILD_CHUNK_LIMIT
 	for cz in range(num_chunks):
-		for cx in range(num_chunks): 
+		for cx in range(num_chunks):
 			_create_chunk(cx, cz, build_sync)
-	if not build_sync:
-		print("[MobileTerrain3D] Large terrain (%d chunks); meshing deferred over ~%.1fs." % [total_chunks, total_chunks / 240.0])
 
 func _create_chunk(cx: int, cz: int, build_now: bool = true):
 	var chunk = MeshInstance3D.new()
@@ -1692,12 +1688,7 @@ func force_refresh_splatmap() -> void:
 			splatmap_texture_local.update(img)
 		else:
 			# Size mismatch — must replace the texture and re-bind the shader
-			# uniform below. Print so any unexpected drift is visible.
-			print("[MobileTerrain3D] Splatmap texture size mismatch (%dx%d vs %dx%d); recreating." % [
-				tex_img.get_width() if tex_img != null else -1,
-				tex_img.get_height() if tex_img != null else -1,
-				map_size, map_size
-			])
+			# uniform below.
 			splatmap_texture_local = ImageTexture.create_from_image(img)
 	
 	# Rebind defensively. `update()` preserves the reference so the bind
@@ -2107,7 +2098,11 @@ func _apply_brush_single(hit_point: Vector3):
 		_erode_height(local_pos.x, local_pos.z, brush_radius, brush_strength)
 
 func _paint_splatmap(cx: float, cz: float, radius: float, strength: float):
-	if current_paint_slot < 0 or current_paint_slot > 3: return
+	# V22: explicit zero-based range guard; warns on slot 5+ instead of
+	# silently doing nothing (RGBA8 splatmap only has 4 channels).
+	if not (0 <= current_paint_slot and current_paint_slot < 4):
+		push_warning("MT-005: paint slot %d out of range [0..3]; ignoring." % current_paint_slot)
+		return
 	# V20 FIX (#14): use the stroke-cached image when available; otherwise
 	# fall back to a fresh `get_image()` so scripted/ad-hoc paint calls
 	# outside a stroke still work.
@@ -2198,17 +2193,22 @@ func _paint_splatmap(cx: float, cz: float, radius: float, strength: float):
 				elif current_paint_slot == 3:
 					color.a += blend_factor
 				img.set_pixel(x, z, color)
-				
-	splatmap_texture_local.update(img)
-	# V20 FIX (#14): inside a stroke we leave byte-array sync and shader
-	# rebind to end_stroke / start_stroke respectively — both are no-ops
-	# on every-dab basis since the reference doesn't change mid-stroke
-	# and the byte array isn't read until the stroke commits to undo.
-	# Out-of-stroke calls (scripts, manual paint) keep the old eager
-	# behavior so they don't silently leave splatmap_data stale.
+
+	# V22: null guard. splatmap_texture_local can be nulled between
+	# start_stroke and now in pathological cases (eg user resized map
+	# mid-stroke and the rebuild raced ahead of our paint dab). Without
+	# this check, .update() would NPE.
+	if splatmap_texture_local != null:
+		splatmap_texture_local.update(img)
+	# V20: inside a stroke we leave byte-array sync and shader rebind to
+	# end_stroke / start_stroke — both are no-ops per-dab. Out-of-stroke
+	# calls (scripts, manual paint) keep eager behaviour.
 	if not in_stroke:
-		splatmap_data = img.get_data()
-		if terrain_material and terrain_material is ShaderMaterial: 
+		# V22: .duplicate() so callers mutating the returned bytes can't
+		# silently corrupt our internal copy via the shared-buffer trap
+		# some Godot 4 builds have.
+		splatmap_data = img.get_data().duplicate()
+		if terrain_material and terrain_material is ShaderMaterial:
 			terrain_material.set_shader_parameter("splatmap", splatmap_texture_local)
 
 func _set_brush_mask(val: Texture2D) -> void:
