@@ -2,9 +2,12 @@
 extends Node3D
 
 @export_category("Terrain Core")
-@export var map_size: int = 256 : set = _set_map_size
-@export var chunk_size: int = 32 : set = _set_chunk_size
-@export var terrain_material: Material : set = _set_material
+@export var map_size: int = 256:
+	set = _set_map_size
+@export var chunk_size: int = 32:
+	set = _set_chunk_size
+@export var terrain_material: Material:
+	set = _set_material
 # V21 EXTERNAL STORAGE: when set, height_data and splatmap are loaded
 # from this external .res file instead of being inlined into the .tscn.
 # Use the "Externalize / Re-inline" inspector buttons to migrate between
@@ -16,7 +19,8 @@ extends Node3D
 # When this field is non-empty, the inline height_data / splatmap_texture_local
 # values below are IGNORED at load time and overwritten from the resource.
 # So toggling between modes is safe — no data is silently lost.
-@export_file("*.res") var external_data_path: String = "" : set = _set_external_data_path
+@export_file("*.res") var external_data_path: String = "":
+	set = _set_external_data_path
 # V21: external storage gating.
 #
 # These two fields hold the heavy terrain data. Whether they get
@@ -41,8 +45,10 @@ extends Node3D
 # V21: inspector triggers for external-storage migration. Checking the
 # box runs the migration once, then auto-clears the box (same pattern
 # as click_to_import).
-@export var click_to_externalize: bool = false : set = _externalize_data
-@export var click_to_inline: bool = false : set = _inline_data
+@export var click_to_externalize: bool = false:
+	set = _externalize_data
+@export var click_to_inline: bool = false:
+	set = _inline_data
 
 @export_category("Varlık Yöneticisi")
 @export var terrain_textures: Array[Texture2D] = []
@@ -66,39 +72,53 @@ extends Node3D
 @export var asset_meshes: Array[Mesh] = []
 
 @export_category("Gelişmiş PBR/Eğim Settings")
-@export var texture_scale: float = 1.0 : set = _set_tex_scale
+@export var texture_scale: float = 1.0:
+	set = _set_tex_scale
 # V21: New PBR controls. These multiply onto the shader output, so they
 # work uniformly across all slots without per-slot UI bloat.
-@export_range(0.0, 2.0) var normal_strength: float = 1.0 : set = _set_normal_strength
-@export_range(0.0, 2.0) var roughness_multiplier: float = 1.0 : set = _set_roughness_multiplier
-@export_range(0.0, 1.0) var ao_strength: float = 1.0 : set = _set_ao_strength
+@export_range(0.0, 2.0) var normal_strength: float = 1.0:
+	set = _set_normal_strength
+@export_range(0.0, 2.0) var roughness_multiplier: float = 1.0:
+	set = _set_roughness_multiplier
+@export_range(0.0, 1.0) var ao_strength: float = 1.0:
+	set = _set_ao_strength
 # V21: Anti-tile variation. 0 = old single-sample tile (cheap, grids
 # visible on small tiling textures). 1 = full variation, doubles
 # albedo texture cost. See _mt_sample_var in TERRAIN_SHADER. Sweet
 # spot for grass/dirt is usually around 0.4-0.7.
-@export_range(0.0, 1.0) var texture_variation: float = 0.0 : set = _set_texture_variation
+@export_range(0.0, 1.0) var texture_variation: float = 0.0:
+	set = _set_texture_variation
 # V21 anti-tile pro: see the matching uniform comments in TERRAIN_SHADER
 # for what each parameter does to the look. All three default to "off"-
 # adjacent values so existing scenes render unchanged after V21 upgrade.
-@export_range(1.0, 50.0) var texture_cell_size: float = 10.0 : set = _set_texture_cell_size
-@export_range(0.0, 1.0) var rotation_jitter: float = 0.0 : set = _set_rotation_jitter
-@export_range(0.0, 1.0) var triplanar_blend: float = 0.0 : set = _set_triplanar_blend
+@export_range(1.0, 50.0) var texture_cell_size: float = 10.0:
+	set = _set_texture_cell_size
+@export_range(0.0, 1.0) var rotation_jitter: float = 0.0:
+	set = _set_rotation_jitter
+@export_range(0.0, 1.0) var triplanar_blend: float = 0.0:
+	set = _set_triplanar_blend
 # slope_rock_factor: kept for backward compat with V19/V20 scenes that
 # saved this property. The new PBR shader no longer auto-blends rock by
 # slope — that was a single-slot hack. Paint rock onto slot 2 (or any
 # slot) yourself via the brush. The setter is a no-op now.
-@export var slope_rock_factor: float = 0.7 : set = _set_slope_rock
+@export var slope_rock_factor: float = 0.7:
+	set = _set_slope_rock
 
 @export_category("EXR Heightmap Import")
 @export var import_texture: Texture2D
 @export var import_max_height: float = 50.0
-@export var click_to_import: bool = false : set = _import_exr
+@export var click_to_import: bool = false:
+	set = _import_exr
 
-var current_tool: int = 0 : set = _set_current_tool
+var current_tool: int = 0:
+	set = _set_current_tool
 var current_paint_slot: int = 0
 var current_object_slot: int = 0
 var brush_shape: int = 0
-var brush_radius: float = 8.0 : set = _set_brush_radius
+var brush_radius: float = 8.0:
+	set = _set_brush_radius
+
+
 # V21: symmetric to brush_strength — clamp on every write so script-set
 # or scene-load can't put the node in a state the slider can't reach.
 # Range matches the radius slider [1.0, 50.0]. Lower bound > 0 prevents
@@ -107,6 +127,7 @@ var brush_radius: float = 8.0 : set = _set_brush_radius
 # the brush UV math.
 func _set_brush_radius(val: float) -> void:
 	brush_radius = clampf(val, 1.0, 50.0)
+
 
 # V22: switching tools must invalidate the paint stroke cache. Without
 # this, a paint stroke that ended via tool-switch (instead of mouse-up)
@@ -118,6 +139,8 @@ func _set_current_tool(val: int) -> void:
 		return
 	current_tool = val
 	_splatmap_stroke_image = null
+
+
 # V21: default lowered from 0.5 to 0.2. With the rate-limit cap at 25 Hz,
 # a stationary tap at strength 0.2 raises centre height by ~5 units/sec
 # instead of the ~30/sec the old 0.5-default produced. Less surprising
@@ -130,9 +153,13 @@ func _set_current_tool(val: int) -> void:
 # the range, because each write is just re-clamping. Clamp on assign
 # fixes this regardless of where the assignment came from (scene load,
 # script set, slider change).
-var brush_strength: float = 0.2 : set = _set_brush_strength
+var brush_strength: float = 0.2:
+	set = _set_brush_strength
+
+
 func _set_brush_strength(val: float) -> void:
 	brush_strength = clampf(val, 0.1, 2.0)
+
 
 # V21: object scatter controls. The pre-V21 "place one instance per
 # brush dab" behaviour was unworkable in practice:
@@ -169,7 +196,8 @@ var _last_brush_apply_time: float = 0.0
 # scatter, etc.) or any custom mask the user drops in
 # `addons/mobile_terrain/brushes/`. Tool = what action; Mask = how
 # the action is distributed across the footprint.
-@export var brush_mask: Texture2D = null : set = _set_brush_mask
+@export var brush_mask: Texture2D = null:
+	set = _set_brush_mask
 
 # Cached Image extracted from `brush_mask` for cheap pixel sampling
 # during a stroke. We re-extract only when the texture handle changes
@@ -179,7 +207,7 @@ var _last_brush_apply_time: float = 0.0
 var _brush_mask_image: Image = null
 
 var chunks: Dictionary = {}
-var multimesh_instances: Dictionary = {} 
+var multimesh_instances: Dictionary = {}
 var dirty_chunks: Dictionary = {}
 var last_sculpt_pos: Vector3 = Vector3.INF
 var last_placement_pos: Vector3 = Vector3.INF
@@ -230,7 +258,9 @@ var _rebuilding_terrain: bool = false
 #                      Equals the previous instance_count (i.e. the slot we
 #                      just expanded into).
 #   placement_transform - the transform that was set on that instance.
-signal foliage_placed(mmi: MultiMeshInstance3D, instance_index: int, placement_transform: Transform3D)
+signal foliage_placed(
+	mmi: MultiMeshInstance3D, instance_index: int, placement_transform: Transform3D
+)
 
 # V21: emitted once per actual brush application (after rate-limit
 # throttling). The plugin connects to this so the cursor mesh re-drapes
@@ -262,6 +292,7 @@ var noise_gen: FastNoiseLite
 # skip the reload logic; user-initiated inspector edits keep the flag
 # false and trigger a fresh load from the new path.
 var _suppress_external_path_setter: bool = false
+
 
 # V21: setter for external_data_path. Lets the inspector trigger a
 # reload when the user manually edits the path, without breaking the
@@ -295,6 +326,7 @@ func _set_external_data_path(val: String) -> void:
 			# Rebuild visuals from the freshly-loaded data.
 			initialize_terrain()
 			update_shader_textures()
+
 
 # V21: dynamic property USAGE for the heavy data fields.
 #
@@ -330,11 +362,12 @@ func _validate_property(property: Dictionary) -> void:
 			# External mode: editor sees them (for debugging) but save() skips.
 			property.usage = PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_SCRIPT_VARIABLE
 
+
 func _ready() -> void:
 	noise_gen = FastNoiseLite.new()
 	noise_gen.noise_type = FastNoiseLite.TYPE_SIMPLEX
 	noise_gen.frequency = 0.1
-	
+
 	# V21: external storage load. If external_data_path is set, we
 	# overwrite the inline height_data and splatmap_texture_local with
 	# whatever's in the .res file. This runs BEFORE the height_data
@@ -343,14 +376,14 @@ func _ready() -> void:
 	# leave the inline values intact and print a warning — the user
 	# can re-create the link via the Externalize button.
 	_load_external_data_if_set()
-	
+
 	if height_data.is_empty():
 		height_data.resize(map_size * map_size)
 		height_data.fill(0.0)
-	
+
 	while terrain_textures.size() < 4:
 		terrain_textures.append(null)
-	
+
 	# V21: PBR array migration. Old V19/V20 scenes only saved
 	# `terrain_textures` (albedo); the new normal/roughness/AO arrays
 	# load empty. Pad them to match the albedo count so the rest of
@@ -377,12 +410,13 @@ func _ready() -> void:
 	terrain_height.resize(terrain_textures.size())
 	terrain_metallic.resize(terrain_textures.size())
 	terrain_emission.resize(terrain_textures.size())
-		
-	_initialize_splatmap() 
-	_setup_default_shader() 
-	
+
+	_initialize_splatmap()
+	_setup_default_shader()
+
 	call_deferred("initialize_terrain")
 	call_deferred("restore_multimeshes")
+
 
 # V20 FIX: Bring splatmap data and texture into a state consistent with
 # the current `map_size`, preserving painted content where possible.
@@ -422,7 +456,7 @@ func _initialize_splatmap():
 	# fallback get_image() path in _paint_splatmap (which re-reads from
 	# the freshly-resized texture).
 	_splatmap_stroke_image = null
-	
+
 	# --- Branch A: there's an existing texture. ---
 	if splatmap_texture_local != null:
 		var img := splatmap_texture_local.get_image()
@@ -450,7 +484,7 @@ func _initialize_splatmap():
 				return
 		# img somehow null — fall through to rebuild from scratch.
 		splatmap_texture_local = null
-	
+
 	# --- Branch B: no texture. Build from byte data or defaults. ---
 	if splatmap_data.size() != expected_bytes:
 		# Either empty (fresh terrain) or wrong size (e.g. a stale buffer
@@ -460,13 +494,14 @@ func _initialize_splatmap():
 		# the first texture, a sensible "blank canvas" starting point.
 		splatmap_data.resize(expected_bytes)
 		for i in range(map_size * map_size):
-			splatmap_data[i*4]   = 255
-			splatmap_data[i*4+1] = 0
-			splatmap_data[i*4+2] = 0
-			splatmap_data[i*4+3] = 0
-	
+			splatmap_data[i * 4] = 255
+			splatmap_data[i * 4 + 1] = 0
+			splatmap_data[i * 4 + 2] = 0
+			splatmap_data[i * 4 + 3] = 0
+
 	var img := Image.create_from_data(map_size, map_size, false, Image.FORMAT_RGBA8, splatmap_data)
 	splatmap_texture_local = ImageTexture.create_from_image(img)
+
 
 ## V22: TERRAIN_SHADER moved to shaders/terrain.gdshader. See
 ## _setup_default_shader for the load path. Kept here as a fallback
@@ -740,9 +775,12 @@ void fragment() {
 }
 """
 
+
 func _setup_default_shader():
-	if terrain_material != null and not (terrain_material is ShaderMaterial): return
-	if terrain_material == null: terrain_material = ShaderMaterial.new()
+	if terrain_material != null and not (terrain_material is ShaderMaterial):
+		return
+	if terrain_material == null:
+		terrain_material = ShaderMaterial.new()
 	var smat = terrain_material as ShaderMaterial
 	# V21: detect a stale shader (saved with older addon version) by
 	# checking for the existence of one of the new uniforms. If the
@@ -781,8 +819,10 @@ func _setup_default_shader():
 	# scene-compat (old scenes deserialize it without error) but the
 	# value is ignored.
 
+
 func update_shader_textures():
-	if not (terrain_material is ShaderMaterial): return
+	if not (terrain_material is ShaderMaterial):
+		return
 	var smat = terrain_material as ShaderMaterial
 	smat.set_shader_parameter("splatmap", splatmap_texture_local)
 	smat.set_shader_parameter("tex_scale", texture_scale)
@@ -799,7 +839,7 @@ func update_shader_textures():
 	# rather than ProjectSettings so it stays correct even when the user
 	# overrides the renderer per-scene.
 	smat.set_shader_parameter("mobile_quality", _is_mobile_renderer())
-	
+
 	# V21: Bind all four map types per slot. Empty slots get type-correct
 	# default textures (transparent for albedo, flat normal for normals,
 	# white for roughness/AO) instead of `null`, because Godot 4 silently
@@ -814,10 +854,19 @@ func update_shader_textures():
 		var tn: Texture2D = terrain_normal[i] if i < terrain_normal.size() else null
 		var tr: Texture2D = terrain_roughness[i] if i < terrain_roughness.size() else null
 		var tao: Texture2D = terrain_ao[i] if i < terrain_ao.size() else null
-		smat.set_shader_parameter("tex_a_%d" % i, ta if ta != null else _get_or_create_blank_texture("albedo"))
-		smat.set_shader_parameter("tex_n_%d" % i, tn if tn != null else _get_or_create_blank_texture("normal"))
-		smat.set_shader_parameter("tex_r_%d" % i, tr if tr != null else _get_or_create_blank_texture("white"))
-		smat.set_shader_parameter("tex_ao_%d" % i, tao if tao != null else _get_or_create_blank_texture("white"))
+		smat.set_shader_parameter(
+			"tex_a_%d" % i, ta if ta != null else _get_or_create_blank_texture("albedo")
+		)
+		smat.set_shader_parameter(
+			"tex_n_%d" % i, tn if tn != null else _get_or_create_blank_texture("normal")
+		)
+		smat.set_shader_parameter(
+			"tex_r_%d" % i, tr if tr != null else _get_or_create_blank_texture("white")
+		)
+		smat.set_shader_parameter(
+			"tex_ao_%d" % i, tao if tao != null else _get_or_create_blank_texture("white")
+		)
+
 
 # V21: Per-type blank textures. Each map type needs a different default
 # colour for the "empty slot" placeholder:
@@ -826,6 +875,8 @@ func update_shader_textures():
 #   - white   → (1,1,1,1): full roughness, full AO (no occlusion)
 # Each is cached once per type, lazily created.
 var _blank_textures: Dictionary = {}
+
+
 func _get_or_create_blank_texture(map_type: String) -> ImageTexture:
 	if map_type in _blank_textures:
 		return _blank_textures[map_type]
@@ -846,46 +897,55 @@ func _get_or_create_blank_texture(map_type: String) -> ImageTexture:
 	_blank_textures[map_type] = tex
 	return tex
 
+
 func _set_slope_rock(val: float):
 	# V21: kept for backward compat with V19/V20 saved scenes. The auto-rock-by-slope
 	# feature was removed in V21 in favour of user-painted rock via the splatmap.
 	slope_rock_factor = val
 	# No shader uniform to push; the shader doesn't reference this any more.
 
+
 func _set_normal_strength(val: float):
 	normal_strength = val
 	if terrain_material is ShaderMaterial:
 		(terrain_material as ShaderMaterial).set_shader_parameter("normal_strength", val)
+
 
 func _set_roughness_multiplier(val: float):
 	roughness_multiplier = val
 	if terrain_material is ShaderMaterial:
 		(terrain_material as ShaderMaterial).set_shader_parameter("roughness_multiplier", val)
 
+
 func _set_ao_strength(val: float):
 	ao_strength = val
 	if terrain_material is ShaderMaterial:
 		(terrain_material as ShaderMaterial).set_shader_parameter("ao_strength", val)
+
 
 func _set_texture_variation(val: float):
 	texture_variation = val
 	if terrain_material is ShaderMaterial:
 		(terrain_material as ShaderMaterial).set_shader_parameter("texture_variation", val)
 
+
 func _set_texture_cell_size(val: float):
 	texture_cell_size = val
 	if terrain_material is ShaderMaterial:
 		(terrain_material as ShaderMaterial).set_shader_parameter("texture_cell_size", val)
+
 
 func _set_rotation_jitter(val: float):
 	rotation_jitter = val
 	if terrain_material is ShaderMaterial:
 		(terrain_material as ShaderMaterial).set_shader_parameter("rotation_jitter", val)
 
+
 func _set_triplanar_blend(val: float):
 	triplanar_blend = val
 	if terrain_material is ShaderMaterial:
 		(terrain_material as ShaderMaterial).set_shader_parameter("triplanar_blend", val)
+
 
 # V20 FIX (#12): Snap a candidate map_size to the nearest multiple of
 # chunk_size, with a user-visible warning. Auto-rounding instead of
@@ -904,13 +964,24 @@ func _align_to_chunks(val: int) -> int:
 	# floor preserves the divisibility invariant the rest of the code
 	# assumes (every chunk has its full row of vertices).
 	if val < chunk_size:
-		push_warning("MobileTerrain3D: map_size %d below chunk_size %d; clamped to %d." % [val, chunk_size, chunk_size])
+		push_warning(
+			(
+				"MobileTerrain3D: map_size %d below chunk_size %d; clamped to %d."
+				% [val, chunk_size, chunk_size]
+			)
+		)
 		val = chunk_size
 	if chunk_size < 1 or val % chunk_size == 0:
 		return val
 	var rounded = max(chunk_size, roundi(float(val) / chunk_size) * chunk_size)
-	push_warning("MobileTerrain3D: map_size %d is not a multiple of chunk_size %d; rounded to %d so the chunk grid tiles cleanly." % [val, chunk_size, rounded])
+	push_warning(
+		(
+			"MobileTerrain3D: map_size %d is not a multiple of chunk_size %d; rounded to %d so the chunk grid tiles cleanly."
+			% [val, chunk_size, rounded]
+		)
+	)
 	return rounded
+
 
 func _set_map_size(val: int):
 	# V22 FIX (audit-chunk-resize-during-stroke + audit-chunk-map-size-mid-rebuild):
@@ -951,12 +1022,22 @@ func _set_map_size(val: int):
 				var new_count: int = int(ceil(float(val) / float(cand)))
 				new_count = new_count * new_count
 				if new_count <= MAX_CHUNK_COUNT:
-					push_warning("MobileTerrain3D: map_size %d × chunk_size %d would produce %d chunks (too many). Auto-bumped chunk_size to %d." % [val, chunk_size, implied_count, cand])
+					push_warning(
+						(
+							"MobileTerrain3D: map_size %d × chunk_size %d would produce %d chunks (too many). Auto-bumped chunk_size to %d."
+							% [val, chunk_size, implied_count, cand]
+						)
+					)
 					new_chunk_size = cand
 					break
 			if new_chunk_size == chunk_size:
 				# No candidate worked — map is extreme. Cap and warn.
-				push_warning("MobileTerrain3D: map_size %d is extreme (>32K cells per side). Performance will be severely degraded. Consider splitting into multiple terrain nodes." % val)
+				push_warning(
+					(
+						"MobileTerrain3D: map_size %d is extreme (>32K cells per side). Performance will be severely degraded. Consider splitting into multiple terrain nodes."
+						% val
+					)
+				)
 				new_chunk_size = 1024
 			# V21 CRITICAL: bypass the chunk_size setter via flag. Calling
 			# the setter here cascades into another initialize_terrain
@@ -979,11 +1060,13 @@ func _set_map_size(val: int):
 		update_shader_textures()
 		initialize_terrain()
 
+
 # V21: bypass flag for _set_chunk_size. Set true around internal
 # writes that need to update the value WITHOUT triggering the cascade
 # (initialize_terrain + the >map_size clamp). Used by _set_map_size
 # during auto-bump — that path is about to do its own initialize_terrain.
 var _suppress_chunk_size_setter: bool = false
+
 
 func _set_chunk_size(val: int):
 	# V22 FIX (audit-chunk-resize-during-stroke + audit-chunk-map-size-mid-rebuild):
@@ -997,7 +1080,8 @@ func _set_chunk_size(val: int):
 		# Just record the new value; the caller is responsible for any
 		# downstream rebuild. Clamps below still apply so we never
 		# silently store an invalid value.
-		if val < 1: val = 1
+		if val < 1:
+			val = 1
 		chunk_size = val
 		return
 	# V20 FIX (#12): clamp to at least 1 — chunk_size==0 would divide-by-
@@ -1013,7 +1097,12 @@ func _set_chunk_size(val: int):
 	# Clamping down here keeps the change intent-preserving: chunks just
 	# get capped at map_size, no implicit map expansion.
 	if val > map_size:
-		push_warning("MobileTerrain3D: chunk_size %d > map_size %d; clamped to %d." % [val, map_size, map_size])
+		push_warning(
+			(
+				"MobileTerrain3D: chunk_size %d > map_size %d; clamped to %d."
+				% [val, map_size, map_size]
+			)
+		)
 		val = map_size
 	chunk_size = val
 	if Engine.is_editor_hint():
@@ -1023,10 +1112,16 @@ func _set_chunk_size(val: int):
 		# don't duplicate that work in the else branch.
 		if map_size % chunk_size != 0:
 			var rounded = max(chunk_size, roundi(float(map_size) / chunk_size) * chunk_size)
-			push_warning("MobileTerrain3D: chunk_size %d does not divide map_size %d; rounding map_size to %d." % [chunk_size, map_size, rounded])
+			push_warning(
+				(
+					"MobileTerrain3D: chunk_size %d does not divide map_size %d; rounding map_size to %d."
+					% [chunk_size, map_size, rounded]
+				)
+			)
 			map_size = rounded  # cascades through _set_map_size → initialize_terrain
 		else:
 			initialize_terrain()
+
 
 func _set_material(val: Material):
 	terrain_material = val
@@ -1047,9 +1142,11 @@ func _set_material(val: Material):
 	# so assigning a StandardMaterial3D or other type is a safe no-op.
 	update_shader_textures()
 
+
 func _set_tex_scale(val: float):
 	texture_scale = val
 	update_shader_textures()
+
 
 func bake_collision():
 	# V21: chunks aren't owned by the edited scene normally (they're
@@ -1067,7 +1164,7 @@ func bake_collision():
 	if get_tree() and get_tree().edited_scene_root:
 		scene_root = get_tree().edited_scene_root
 	for chunk in chunks.values():
-		for child in chunk.get_children(): 
+		for child in chunk.get_children():
 			child.queue_free()
 		chunk.create_trimesh_collision()
 		if scene_root != null:
@@ -1076,17 +1173,21 @@ func bake_collision():
 			if child is StaticBody3D:
 				if scene_root != null:
 					child.owner = scene_root
-					for shape in child.get_children(): 
+					for shape in child.get_children():
 						shape.owner = scene_root
 
+
 func _import_exr(val: bool):
-	if not val or not import_texture: return
+	if not val or not import_texture:
+		return
 	# TKT-003 Phase A.2: byte-bulk image-to-heights conversion extracted
 	# into systems/heightmap_io.gd. This function keeps responsibility
 	# for the side effects (writing height_data, triggering
 	# initialize_terrain, emitting the large-heightmap nudge) while the
 	# pure conversion lives in HeightmapIO.
-	var heights: PackedFloat32Array = HeightmapIO.convert_texture_to_heights(import_texture, map_size, import_max_height)
+	var heights: PackedFloat32Array = HeightmapIO.convert_texture_to_heights(
+		import_texture, map_size, import_max_height
+	)
 	if heights.is_empty():
 		# HeightmapIO returns empty on null/invalid input or buffer mismatch.
 		# Silently bail — the caller already validated import_texture.
@@ -1099,7 +1200,9 @@ func _import_exr(val: bool):
 	# effect of an import — surprising, and it'd fail silently if the
 	# scene isn't saved yet.
 	if total >= 512 * 512 and external_data_path == "":
-		TerrainDiagnostics.warn(TerrainDiagnostics.W_LARGE_HEIGHTMAP, [total, total * 4.0 / 1048576.0])
+		TerrainDiagnostics.warn(
+			TerrainDiagnostics.W_LARGE_HEIGHTMAP, [total, total * 4.0 / 1048576.0]
+		)
 	# V21: auto-reset the checkbox so the next import requires another
 	# explicit click. Without this, the property stayed `true` in the
 	# Inspector, but a second click (true → true) didn't fire the setter
@@ -1109,9 +1212,11 @@ func _import_exr(val: bool):
 	# directly inside this function.
 	call_deferred("_reset_click_to_import")
 
+
 func _reset_click_to_import() -> void:
 	click_to_import = false
 	notify_property_list_changed()
+
 
 # V21 EXTERNAL STORAGE: helpers for opting into / out of external
 # .res storage for height_data and splatmap. The pattern matches
@@ -1123,8 +1228,10 @@ func _reset_click_to_import() -> void:
 # Using a single Resource (not two) means one external file per terrain
 # rather than two, and one ResourceSaver call per save.
 
+
 func _externalize_data(val: bool) -> void:
-	if not val: return
+	if not val:
+		return
 	if not Engine.is_editor_hint():
 		# Runtime can't write resources (the project is exported, read-only).
 		# This is purely an editor-time migration helper.
@@ -1178,8 +1285,10 @@ func _externalize_data(val: bool) -> void:
 			if collision > 64:
 				# Pathological case — give up to avoid an infinite loop.
 				break
-			target_path = scene_path.get_basename() + "_" + safe_name + "_" + str(collision) + "_terrain.res"
-	
+			target_path = (
+				scene_path.get_basename() + "_" + safe_name + "_" + str(collision) + "_terrain.res"
+			)
+
 	# Build the resource. We deliberately COPY the byte arrays via duplicate()
 	# rather than passing the live references; otherwise the resource and
 	# the inline @export would share the same backing data and any future
@@ -1199,7 +1308,7 @@ func _externalize_data(val: bool) -> void:
 		if img != null:
 			data.splatmap_bytes = img.get_data().duplicate()
 			data.splatmap_size = img.get_width()
-	
+
 	var err := ResourceSaver.save(data, target_path)
 	if err != OK:
 		TerrainDiagnostics.error(TerrainDiagnostics.E_SAVE_RESOURCE_FAILED, [target_path, err])
@@ -1235,12 +1344,15 @@ func _externalize_data(val: bool) -> void:
 	notify_property_list_changed()
 	call_deferred("_reset_externalize")
 
+
 func _reset_externalize() -> void:
 	click_to_externalize = false
 	notify_property_list_changed()
 
+
 func _inline_data(val: bool) -> void:
-	if not val: return
+	if not val:
+		return
 	if external_data_path == "":
 		push_warning("MobileTerrain3D: no external_data_path set, nothing to inline.")
 		call_deferred("_reset_inline")
@@ -1253,7 +1365,12 @@ func _inline_data(val: bool) -> void:
 	#   3. height_data stays at whatever was in memory (possibly empty)
 	#   4. Scene save persists blank terrain → silent data loss
 	if not ResourceLoader.exists(external_data_path):
-		push_warning("MobileTerrain3D: cannot inline — external .res '%s' not found. Path NOT cleared so you can locate and restore the file." % external_data_path)
+		push_warning(
+			(
+				"MobileTerrain3D: cannot inline — external .res '%s' not found. Path NOT cleared so you can locate and restore the file."
+				% external_data_path
+			)
+		)
 		call_deferred("_reset_inline")
 		return
 	# Load the external resource into the inline @export fields and
@@ -1266,7 +1383,9 @@ func _inline_data(val: bool) -> void:
 	# We can verify via height_data.size() > 0 since a successful load
 	# always assigns the duplicate'd height array.
 	if height_data.size() == 0:
-		push_warning("MobileTerrain3D: inline aborted — external load did not populate height_data. Path preserved.")
+		push_warning(
+			"MobileTerrain3D: inline aborted — external load did not populate height_data. Path preserved."
+		)
 		call_deferred("_reset_inline")
 		return
 	# V21: suppress setter cascade — we already loaded the data; clearing
@@ -1277,12 +1396,15 @@ func _inline_data(val: bool) -> void:
 	_suppress_external_path_setter = false
 	call_deferred("_reset_inline")
 
+
 func _reset_inline() -> void:
 	click_to_inline = false
 	notify_property_list_changed()
 
+
 func _load_external_data_if_set() -> void:
-	if external_data_path == "": return
+	if external_data_path == "":
+		return
 	# V23 SECURITY (TKT-002 C1): scope-validate path before load().
 	# load() executes any GDScript embedded in the .res before our `is`
 	# type-check fires, so an unscoped path can be a remote-code-execution
@@ -1290,20 +1412,37 @@ func _load_external_data_if_set() -> void:
 	# (runtime-managed save data) paths and reject anything else, including
 	# absolute filesystem paths and `..` traversal.
 	if not _is_safe_external_path(external_data_path):
-		push_warning("MobileTerrain3D: refusing to load '%s' — external_data_path must live under res:// or user:// (no path traversal). See TKT-002 C1." % external_data_path)
+		push_warning(
+			(
+				"MobileTerrain3D: refusing to load '%s' — external_data_path must live under res:// or user:// (no path traversal). See TKT-002 C1."
+				% external_data_path
+			)
+		)
 		return
 	if not ResourceLoader.exists(external_data_path):
-		push_warning("MobileTerrain3D: external_data_path '%s' not found; using inline data." % external_data_path)
+		push_warning(
+			(
+				"MobileTerrain3D: external_data_path '%s' not found; using inline data."
+				% external_data_path
+			)
+		)
 		return
 	var res = load(external_data_path)
 	if not (res is MobileTerrainData):
-		push_warning("MobileTerrain3D: '%s' is not a MobileTerrainData resource." % external_data_path)
+		push_warning(
+			"MobileTerrain3D: '%s' is not a MobileTerrainData resource." % external_data_path
+		)
 		return
 	var data: MobileTerrainData = res
 	# V23 VALIDATION (TKT-002 gap M14): catch corrupted/truncated .res
 	# files before we trust their height_data length downstream.
 	if data.map_size <= 0 or data.height_data.size() != data.map_size * data.map_size:
-		push_warning("MobileTerrain3D: '%s' fails schema check (map_size=%d, height_data.size()=%d). Refusing to load." % [external_data_path, data.map_size, data.height_data.size()])
+		push_warning(
+			(
+				"MobileTerrain3D: '%s' fails schema check (map_size=%d, height_data.size()=%d). Refusing to load."
+				% [external_data_path, data.map_size, data.height_data.size()]
+			)
+		)
 		return
 	# V21 CRITICAL ORDER FIX:
 	# Populate height_data BEFORE updating map_size. The _set_map_size
@@ -1315,7 +1454,9 @@ func _load_external_data_if_set() -> void:
 	# subsequent map_size change sees a consistent state.
 	height_data = data.height_data.duplicate()
 	if data.splatmap_bytes.size() > 0 and data.splatmap_size > 0:
-		var img := Image.create_from_data(data.splatmap_size, data.splatmap_size, false, Image.FORMAT_RGBA8, data.splatmap_bytes)
+		var img := Image.create_from_data(
+			data.splatmap_size, data.splatmap_size, false, Image.FORMAT_RGBA8, data.splatmap_bytes
+		)
 		splatmap_texture_local = ImageTexture.create_from_image(img)
 		splatmap_data = data.splatmap_bytes.duplicate()
 	# Defensive size check: if the user changed map_size in the inspector
@@ -1323,6 +1464,7 @@ func _load_external_data_if_set() -> void:
 	# the canonical store) and update map_size to match.
 	if data.map_size != map_size and data.map_size > 0:
 		map_size = data.map_size  # cascades through _set_map_size
+
 
 # V23 SECURITY (TKT-002 C1): whitelist external_data_path to project-
 # bundled (res://) or user-owned (user://) locations. Reject absolute
@@ -1337,6 +1479,7 @@ static func _is_safe_external_path(p: String) -> bool:
 	if not (p.begins_with("res://") or p.begins_with("user://")):
 		return false
 	return true
+
 
 # V23 (TKT-002 C6): Forward Mobile / Compatibility renderer detection.
 # Used by the shader binding to skip expensive 3x triplanar sampling on
@@ -1353,10 +1496,12 @@ static func _is_mobile_renderer() -> bool:
 	var method: String = rs.get_current_rendering_method()
 	return method == "mobile" or method == "gl_compatibility"
 
+
 func get_height(x: int, z: int) -> float:
 	x = clampi(x, 0, map_size - 1)
 	z = clampi(z, 0, map_size - 1)
 	return height_data[z * map_size + x]
+
 
 func _process(_delta: float):
 	# V21 CRITICAL FIX: removed the Engine.is_editor_hint() gate.
@@ -1394,9 +1539,11 @@ func _process(_delta: float):
 			update_chunk_mesh(cpos.x, cpos.y)
 			keys_to_remove.append(cpos)
 			process_count += 1
-			if process_count >= budget: break
-		for k in keys_to_remove: 
+			if process_count >= budget:
+				break
+		for k in keys_to_remove:
 			dirty_chunks.erase(k)
+
 
 func initialize_terrain():
 	# V22 FIX (audit-chunk-map-size-mid-rebuild): re-entrancy guard. If a
@@ -1436,7 +1583,12 @@ func initialize_terrain():
 		# layout to migrate from.
 		var old_size = int(sqrt(height_data.size()))
 		if old_size > 0 and old_size * old_size == height_data.size():
-			push_warning("MobileTerrain3D: migrating height_data from %dx%d to %dx%d. Cells inside the overlap region are preserved; the rest are zeroed." % [old_size, old_size, map_size, map_size])
+			push_warning(
+				(
+					"MobileTerrain3D: migrating height_data from %dx%d to %dx%d. Cells inside the overlap region are preserved; the rest are zeroed."
+					% [old_size, old_size, map_size, map_size]
+				)
+			)
 			var new_data = PackedFloat32Array()
 			new_data.resize(expected_size)  # zeroed by default
 			var copy_size = min(old_size, map_size)
@@ -1514,10 +1666,11 @@ func initialize_terrain():
 		_rebuilding_terrain = true
 	_rebuilding_terrain = false
 
+
 func _create_chunk(cx: int, cz: int, build_now: bool = true):
 	var chunk = MeshInstance3D.new()
 	chunk.name = "Chunk_%d_%d" % [cx, cz]
-	if terrain_material: 
+	if terrain_material:
 		chunk.material_override = terrain_material
 	add_child(chunk)
 	# V21 SCENE BLOAT FIX: don't set chunk.owner. Chunks are deterministically
@@ -1539,9 +1692,11 @@ func _create_chunk(cx: int, cz: int, build_now: bool = true):
 		# at the existing 4-chunk-per-frame throttle.
 		dirty_chunks[Vector2i(cx, cz)] = true
 
+
 func update_chunk_mesh(cx: int, cz: int):
 	var chunk = chunks.get(Vector2i(cx, cz))
-	if not chunk: return
+	if not chunk:
+		return
 	# TKT-003 Phase A.4: mesh generation extracted into systems/chunk_renderer.gd
 	# (pure, headless-testable). This function keeps responsibility for the
 	# chunk dictionary lookup, MeshInstance assignment and positioning; the
@@ -1553,6 +1708,7 @@ func update_chunk_mesh(cx: int, cz: int):
 	var start_z = cz * chunk_size
 	chunk.mesh = amesh
 	chunk.position = Vector3(start_x, 0, start_z)
+
 
 # V20 FIX: Re-mesh every existing chunk from the current height_data.
 #
@@ -1605,6 +1761,7 @@ func force_update_all() -> void:
 		for chunk_pos in chunks.keys():
 			dirty_chunks[chunk_pos] = true
 
+
 # V20 FIX: Re-upload splatmap_data to the GPU texture.
 #
 # The shader samples `splatmap_texture_local` (a GPU ImageTexture), but
@@ -1625,7 +1782,7 @@ func force_update_all() -> void:
 func force_refresh_splatmap() -> void:
 	if splatmap_data.is_empty():
 		return
-	
+
 	# Defensive size check. The byte array could be from an older map_size
 	# if someone resized the terrain while there were still paint actions
 	# in the undo history. Image.create_from_data with a mismatched buffer
@@ -1633,11 +1790,16 @@ func force_refresh_splatmap() -> void:
 	# instead — an undo no-op is much better UX than a visible corruption.
 	var expected_bytes := map_size * map_size * 4
 	if splatmap_data.size() != expected_bytes:
-		push_warning("MobileTerrain3D: splatmap_data size %d does not match map_size %d (expected %d bytes). Skipping GPU refresh." % [splatmap_data.size(), map_size, expected_bytes])
+		push_warning(
+			(
+				"MobileTerrain3D: splatmap_data size %d does not match map_size %d (expected %d bytes). Skipping GPU refresh."
+				% [splatmap_data.size(), map_size, expected_bytes]
+			)
+		)
 		return
-	
+
 	var img := Image.create_from_data(map_size, map_size, false, Image.FORMAT_RGBA8, splatmap_data)
-	
+
 	if splatmap_texture_local == null:
 		# No GPU texture yet — can happen if an undo fires before _ready()
 		# has finished initializing the splatmap (e.g. on scene reload with
@@ -1650,7 +1812,9 @@ func force_refresh_splatmap() -> void:
 		# silently leaves the GPU side stale. Can happen with undo/redo
 		# that crosses a map_size change boundary.
 		var tex_img := splatmap_texture_local.get_image()
-		var sizes_match: bool = tex_img != null and tex_img.get_width() == map_size and tex_img.get_height() == map_size
+		var sizes_match: bool = (
+			tex_img != null and tex_img.get_width() == map_size and tex_img.get_height() == map_size
+		)
 		if sizes_match:
 			# In-place GPU upload. This keeps the same ImageTexture reference,
 			# which is important because the shader uniform already points to
@@ -1660,19 +1824,21 @@ func force_refresh_splatmap() -> void:
 			# Size mismatch — must replace the texture and re-bind the shader
 			# uniform below.
 			splatmap_texture_local = ImageTexture.create_from_image(img)
-	
+
 	# Rebind defensively. `update()` preserves the reference so the bind
 	# is usually already valid, but if we took the `create_from_image`
 	# branch above the shader was still holding the old (or null) handle.
 	if terrain_material and terrain_material is ShaderMaterial:
 		terrain_material.set_shader_parameter("splatmap", splatmap_texture_local)
 
+
 func restore_multimeshes():
 	multimesh_instances.clear()
 	for child in get_children():
 		if child is MultiMeshInstance3D and child.name.begins_with("Assets_"):
-			if child.multimesh and child.multimesh.mesh: 
+			if child.multimesh and child.multimesh.mesh:
 				multimesh_instances[child.multimesh.mesh.resource_path] = child
+
 
 func garbage_collect_multimeshes():
 	# V21: `keys_to_remove` was declared but never used. Removed.
@@ -1681,13 +1847,14 @@ func garbage_collect_multimeshes():
 	for path in multimesh_instances.keys():
 		var mesh_exists = false
 		for m in asset_meshes:
-			if m and m.resource_path == path: 
+			if m and m.resource_path == path:
 				mesh_exists = true
 				break
 		if not mesh_exists:
 			var child = multimesh_instances[path]
 			multimesh_instances.erase(path)
 			child.queue_free()
+
 
 # V20 FIX: Re-key an existing MultiMeshInstance3D to a different mesh,
 # preserving the instances inside it.
@@ -1727,11 +1894,11 @@ func repurpose_multimesh_to(old_mesh: Mesh, new_mesh: Mesh) -> bool:
 		return false
 	if multimesh_instances.has(new_path):
 		return false  # Caller should GC instead — see docstring
-	
+
 	var mmi: MultiMeshInstance3D = multimesh_instances[old_path]
 	if not is_instance_valid(mmi) or mmi.multimesh == null:
 		return false
-	
+
 	# Swap the rendered mesh; instance_count and per-instance transforms
 	# are unaffected by changing `mesh`, so all 50 trees remain at their
 	# painted positions but now render as the new model.
@@ -1743,29 +1910,36 @@ func repurpose_multimesh_to(old_mesh: Mesh, new_mesh: Mesh) -> bool:
 	multimesh_instances[new_path] = mmi
 	return true
 
+
 func _get_or_create_multimesh(target_mesh: Mesh) -> MultiMeshInstance3D:
-	if target_mesh == null or target_mesh.resource_path == "": return null
+	if target_mesh == null or target_mesh.resource_path == "":
+		return null
 	var path = target_mesh.resource_path
-	if multimesh_instances.has(path): return multimesh_instances[path]
+	if multimesh_instances.has(path):
+		return multimesh_instances[path]
 	var mmi = MultiMeshInstance3D.new()
 	mmi.name = "Assets_" + path.get_file().get_basename()
 	add_child(mmi)
-	if get_tree() and get_tree().edited_scene_root: 
+	if get_tree() and get_tree().edited_scene_root:
 		mmi.owner = get_tree().edited_scene_root
 	var mm = MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.instance_count = 0
 	mm.mesh = target_mesh
 	mmi.multimesh = mm
-	if get_tree() and get_tree().edited_scene_root: 
+	if get_tree() and get_tree().edited_scene_root:
 		mmi.multimesh.resource_local_to_scene = true
 	multimesh_instances[path] = mmi
 	return mmi
 
+
 func get_intersection_raymarch_persistent(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
 	# V22: delegated to TerrainRaymarchSystem so the algorithm can be
 	# unit-tested without spinning up the whole terrain node.
-	return TerrainRaymarchSystem.intersect(camera, screen_pos, height_data, map_size, global_position)
+	return TerrainRaymarchSystem.intersect(
+		camera, screen_pos, height_data, map_size, global_position
+	)
+
 
 func start_stroke():
 	last_sculpt_pos = Vector3.INF
@@ -1782,6 +1956,7 @@ func start_stroke():
 		_splatmap_stroke_revision = _stroke_revision
 		if terrain_material and terrain_material is ShaderMaterial:
 			terrain_material.set_shader_parameter("splatmap", splatmap_texture_local)
+
 
 func end_stroke():
 	last_sculpt_pos = Vector3.INF
@@ -1804,8 +1979,9 @@ func end_stroke():
 		_deferred_chunk_size = 0
 		chunk_size = pending
 
+
 func apply_brush_stroke_slope(hit_point: Vector3, hit_normal: Vector3):
-	if current_tool == 8: # Object — V21: scatter mode
+	if current_tool == 8:  # Object — V21: scatter mode
 		# V21 SCATTER REWRITE.
 		#
 		# The old code placed ONE instance per dab when the brush had
@@ -1823,15 +1999,17 @@ func apply_brush_stroke_slope(hit_point: Vector3, hit_normal: Vector3):
 		# tools so a held-still finger doesn't fire 60 dabs/second.
 		const MIN_OBJECT_INTERVAL := 0.08  # ~12 dabs/sec held-still
 		var now_obj: float = Time.get_ticks_msec() / 1000.0
-		var moved_obj: bool = last_placement_pos == Vector3.INF \
+		var moved_obj: bool = (
+			last_placement_pos == Vector3.INF
 			or last_placement_pos.distance_to(hit_point) > max(0.5, brush_radius * 0.5)
+		)
 		if not moved_obj and (now_obj - _last_brush_apply_time) < MIN_OBJECT_INTERVAL:
 			return
 		_last_brush_apply_time = now_obj
 		_scatter_foliage(hit_point, hit_normal)
 		last_placement_pos = hit_point
 		return
-	
+
 	# V21: rate-limit stationary brush application.
 	#
 	# Mobile touch motion events fire every few ms even when the user
@@ -1849,17 +2027,20 @@ func apply_brush_stroke_slope(hit_point: Vector3, hit_normal: Vector3):
 	# rather than tens.
 	const MIN_STATIONARY_INTERVAL := 0.04
 	var now: float = Time.get_ticks_msec() / 1000.0
-	var moved: bool = last_sculpt_pos == Vector3.INF or last_sculpt_pos.distance_to(hit_point) > max(0.5, brush_radius * 0.1)
+	var moved: bool = (
+		last_sculpt_pos == Vector3.INF
+		or last_sculpt_pos.distance_to(hit_point) > max(0.5, brush_radius * 0.1)
+	)
 	if not moved and (now - _last_brush_apply_time) < MIN_STATIONARY_INTERVAL:
 		# Not enough time has passed since the last stationary apply.
 		# Skip silently — `last_sculpt_pos` stays put so the next motion
 		# event still benefits from the step-distance lerp below.
 		return
 	_last_brush_apply_time = now
-	
+
 	if last_sculpt_pos != Vector3.INF:
 		var dist = last_sculpt_pos.distance_to(hit_point)
-		var step_dist = max(0.5, brush_radius * 0.1) 
+		var step_dist = max(0.5, brush_radius * 0.1)
 		if dist > step_dist:
 			# V21 STABILITY: cap the per-event step count.
 			#
@@ -1874,17 +2055,18 @@ func apply_brush_stroke_slope(hit_point: Vector3, hit_normal: Vector3):
 			# the frame. Skipped pixels become visible only on absurd
 			# flicks at tiny brush sizes — acceptable trade.
 			var steps: int = mini(int(dist / step_dist), 32)
-			for i in range(1, steps + 1): 
+			for i in range(1, steps + 1):
 				_apply_brush_single(last_sculpt_pos.lerp(hit_point, float(i) / steps))
-		else: 
+		else:
 			_apply_brush_single(hit_point)
-	else: 
+	else:
 		_apply_brush_single(hit_point)
 	last_sculpt_pos = hit_point
 	# V21: tell the plugin to re-drape the cursor mesh on the new
 	# terrain shape. Cheap signal — only fires AFTER rate limiting
 	# (the early return above gates this).
 	brush_applied.emit(hit_point)
+
 
 func _apply_brush_single(hit_point: Vector3):
 	var local_pos = hit_point - global_position
@@ -1907,7 +2089,7 @@ func _apply_brush_single(hit_point: Vector3):
 	# Brush falloff (centre 1.0 → edge 0.0) further scales this per pixel
 	# inside each function. The user experience: doubling the slider
 	# doubles the per-dab effect, max never feels destructive.
-	if current_tool == 7: # Paint
+	if current_tool == 7:  # Paint
 		_paint_splatmap(local_pos.x, local_pos.z, brush_radius, brush_strength * 0.1)
 		return
 	# V22 Phase 4: sculpt ops delegated to SculptOps. The brush state +
@@ -1919,17 +2101,73 @@ func _apply_brush_single(hit_point: Vector3):
 	match current_tool:
 		0, 1:
 			var dir: float = 1.0 if current_tool == 0 else -1.0
-			SculptOps.modify_height(brush, height_data, map_size, mark_dirty, local_pos.x, local_pos.z, brush_radius, brush_strength * dir * 0.5)
+			SculptOps.modify_height(
+				brush,
+				height_data,
+				map_size,
+				mark_dirty,
+				local_pos.x,
+				local_pos.z,
+				brush_radius,
+				brush_strength * dir * 0.5
+			)
 		2:
-			SculptOps.flatten_height(brush, height_data, map_size, mark_dirty, local_pos.x, local_pos.z, brush_radius, local_pos.y, brush_strength)
+			SculptOps.flatten_height(
+				brush,
+				height_data,
+				map_size,
+				mark_dirty,
+				local_pos.x,
+				local_pos.z,
+				brush_radius,
+				local_pos.y,
+				brush_strength
+			)
 		3:
-			height_data = SculptOps.smooth_height(brush, height_data, map_size, mark_dirty, local_pos.x, local_pos.z, brush_radius, brush_strength)
+			height_data = SculptOps.smooth_height(
+				brush,
+				height_data,
+				map_size,
+				mark_dirty,
+				local_pos.x,
+				local_pos.z,
+				brush_radius,
+				brush_strength
+			)
 		4:
-			SculptOps.noise_height(brush, height_data, map_size, mark_dirty, local_pos.x, local_pos.z, brush_radius, brush_strength)
+			SculptOps.noise_height(
+				brush,
+				height_data,
+				map_size,
+				mark_dirty,
+				local_pos.x,
+				local_pos.z,
+				brush_radius,
+				brush_strength
+			)
 		5:
-			SculptOps.terrace_height(brush, height_data, map_size, mark_dirty, local_pos.x, local_pos.z, brush_radius, brush_strength)
+			SculptOps.terrace_height(
+				brush,
+				height_data,
+				map_size,
+				mark_dirty,
+				local_pos.x,
+				local_pos.z,
+				brush_radius,
+				brush_strength
+			)
 		6:  # erosion
-			height_data = SculptOps.erode_height(brush, height_data, map_size, mark_dirty, local_pos.x, local_pos.z, brush_radius, brush_strength)
+			height_data = SculptOps.erode_height(
+				brush,
+				height_data,
+				map_size,
+				mark_dirty,
+				local_pos.x,
+				local_pos.z,
+				brush_radius,
+				brush_strength
+			)
+
 
 func _paint_splatmap(cx: float, cz: float, radius: float, strength: float):
 	# V22: explicit zero-based range guard; warns on slot 5+ instead of
@@ -1961,7 +2199,9 @@ func _paint_splatmap(cx: float, cz: float, radius: float, strength: float):
 	# with x >= img.get_width() returns the wrong pixel without erroring.
 	# Bail rather than write garbage.
 	if img.get_width() != map_size or img.get_height() != map_size:
-		TerrainDiagnostics.error(TerrainDiagnostics.E_SPLATMAP_SIZE_DRIFT, [img.get_width(), img.get_height(), map_size])
+		TerrainDiagnostics.error(
+			TerrainDiagnostics.E_SPLATMAP_SIZE_DRIFT, [img.get_width(), img.get_height(), map_size]
+		)
 		return
 
 	# TKT-003 Phase A.1: paint algorithm extracted into systems/splatmap_system.gd
@@ -1987,6 +2227,7 @@ func _paint_splatmap(cx: float, cz: float, radius: float, strength: float):
 		splatmap_data = img.get_data().duplicate()
 		if terrain_material and terrain_material is ShaderMaterial:
 			terrain_material.set_shader_parameter("splatmap", splatmap_texture_local)
+
 
 func _set_brush_mask(val: Texture2D) -> void:
 	brush_mask = val
@@ -2018,6 +2259,7 @@ func _set_brush_mask(val: Texture2D) -> void:
 	if img.get_format() != Image.FORMAT_RGBA8:
 		img.convert(Image.FORMAT_RGBA8)
 	_brush_mask_image = img
+
 
 # V19 PRO: Advanced Shape detection
 func _mark_chunk_dirty(x: int, z: int):
@@ -2054,13 +2296,13 @@ func _mark_chunk_dirty(x: int, z: int):
 	var cz = z / chunk_size
 	var num_chunks_minus_1 = (map_size / chunk_size) - 1
 	dirty_chunks[Vector2i(cx, cz)] = true
-	if x % chunk_size == 0 and cx > 0: 
+	if x % chunk_size == 0 and cx > 0:
 		dirty_chunks[Vector2i(cx - 1, cz)] = true
-	if z % chunk_size == 0 and cz > 0: 
+	if z % chunk_size == 0 and cz > 0:
 		dirty_chunks[Vector2i(cx, cz - 1)] = true
-	if x % chunk_size == chunk_size - 1 and cx < num_chunks_minus_1: 
+	if x % chunk_size == chunk_size - 1 and cx < num_chunks_minus_1:
 		dirty_chunks[Vector2i(cx + 1, cz)] = true
-	if z % chunk_size == chunk_size - 1 and cz < num_chunks_minus_1: 
+	if z % chunk_size == chunk_size - 1 and cz < num_chunks_minus_1:
 		dirty_chunks[Vector2i(cx, cz + 1)] = true
 	# V20 FIX (bug M1): the missing symmetric pair. Vertex one cell
 	# inside the LEFT/TOP boundary of chunk cx,cz must dirty the
@@ -2071,17 +2313,21 @@ func _mark_chunk_dirty(x: int, z: int):
 	if z % chunk_size == 1 and cz > 0:
 		dirty_chunks[Vector2i(cx, cz - 1)] = true
 
+
 func _place_foliage_slope(pos: Vector3, normal: Vector3):
 	# V21 NOTE: this single-instance placer is kept as a building block
 	# called by _scatter_foliage. It can still be called directly from
 	# scripts that want to drop one instance at a specific spot, but
 	# the editor brush goes through _scatter_foliage now.
-	if current_object_slot < 0 or current_object_slot >= asset_meshes.size(): return
+	if current_object_slot < 0 or current_object_slot >= asset_meshes.size():
+		return
 	var mesh = asset_meshes[current_object_slot]
-	if mesh == null: return
+	if mesh == null:
+		return
 	var mmi = _get_or_create_multimesh(mesh)
-	if not mmi: return
-	
+	if not mmi:
+		return
+
 	var mm = mmi.multimesh
 	var count = mm.instance_count
 	mm.instance_count = count + 1
@@ -2093,6 +2339,7 @@ func _place_foliage_slope(pos: Vector3, normal: Vector3):
 	# placement in the undo history. Done last, after the placement has
 	# fully succeeded, so listeners only ever see valid state.
 	foliage_placed.emit(mmi, count, tf)
+
 
 # V21: scatter `object_density` instances inside the current brush
 # footprint. Each candidate point is rejected if it lands within
@@ -2107,12 +2354,15 @@ func _place_foliage_slope(pos: Vector3, normal: Vector3):
 # per dab on mobile is wasteful and the normal at the centre is a fine
 # approximation across the small radius.
 func _scatter_foliage(centre: Vector3, normal: Vector3):
-	if current_object_slot < 0 or current_object_slot >= asset_meshes.size(): return
+	if current_object_slot < 0 or current_object_slot >= asset_meshes.size():
+		return
 	var mesh = asset_meshes[current_object_slot]
-	if mesh == null: return
+	if mesh == null:
+		return
 	var mmi = _get_or_create_multimesh(mesh)
-	if not mmi: return
-	
+	if not mmi:
+		return
+
 	# Collect placements first so we can reject candidates against
 	# already-placed neighbours from THIS dab. The list of accepted
 	# positions for spacing check is local to this call.
@@ -2120,7 +2370,7 @@ func _scatter_foliage(centre: Vector3, normal: Vector3):
 	var min_sq: float = object_min_spacing * object_min_spacing
 	var attempts: int = 0
 	var max_attempts: int = object_density * 4  # 25% acceptance budget
-	
+
 	while accepted_positions.size() < object_density and attempts < max_attempts:
 		attempts += 1
 		# Uniform sample inside the disc: sqrt-of-uniform for radius,
@@ -2132,7 +2382,7 @@ func _scatter_foliage(centre: Vector3, normal: Vector3):
 		var dz: float = sin(angle) * r
 		var sample_x: float = centre.x + dx
 		var sample_z: float = centre.z + dz
-		
+
 		# Re-sample terrain height at the candidate (x, z) so the
 		# instance sits on the surface even when the brush is over a
 		# slope. get_height clamps internally; subtract our global y
@@ -2141,7 +2391,7 @@ func _scatter_foliage(centre: Vector3, normal: Vector3):
 		var local_z: int = int(floor(sample_z - global_position.z))
 		var sample_y: float = get_height(local_x, local_z) + global_position.y
 		var candidate := Vector3(sample_x, sample_y, sample_z)
-		
+
 		# Spacing check against the dab's own placements.
 		var ok: bool = true
 		for p in accepted_positions:
@@ -2151,12 +2401,13 @@ func _scatter_foliage(centre: Vector3, normal: Vector3):
 		if not ok:
 			continue
 		accepted_positions.append(candidate)
-	
+
 	# Now actually write the accepted instances to the MultiMesh.
 	# Doing this in a second pass lets us grow instance_count once
 	# instead of N times (each grow potentially reallocates the
 	# transform buffer).
-	if accepted_positions.is_empty(): return
+	if accepted_positions.is_empty():
+		return
 	var mm = mmi.multimesh
 	var base_count: int = mm.instance_count
 	mm.instance_count = base_count + accepted_positions.size()

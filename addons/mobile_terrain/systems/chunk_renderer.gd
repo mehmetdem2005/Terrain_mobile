@@ -23,6 +23,7 @@ extends RefCounted
 ##     inline get_height in the hot loop, hoist the UV denominator, bulk
 ##     tangent fill.
 
+
 # Build the ArrayMesh for chunk (cx, cz). Returns null on invalid input.
 #
 # Inputs:
@@ -35,11 +36,7 @@ extends RefCounted
 # 0..chunk_size. The node positions the MeshInstance at (cx*chunk_size, 0,
 # cz*chunk_size) so chunks tile in world space.
 static func build_chunk_mesh(
-	height_data: PackedFloat32Array,
-	map_size: int,
-	chunk_size: int,
-	cx: int,
-	cz: int
+	height_data: PackedFloat32Array, map_size: int, chunk_size: int, cx: int, cz: int
 ) -> ArrayMesh:
 	if map_size <= 0 or chunk_size <= 0:
 		return null
@@ -102,12 +99,18 @@ static func build_chunk_mesh(
 		for x in range(quad_count_x):
 			var row1: int = z * vx_count_x
 			var row2: int = (z + 1) * vx_count_x
-			indices[ii] = row1 + x;       ii += 1
-			indices[ii] = row1 + x + 1;   ii += 1
-			indices[ii] = row2 + x;       ii += 1
-			indices[ii] = row1 + x + 1;   ii += 1
-			indices[ii] = row2 + x + 1;   ii += 1
-			indices[ii] = row2 + x;       ii += 1
+			indices[ii] = row1 + x
+			ii += 1
+			indices[ii] = row1 + x + 1
+			ii += 1
+			indices[ii] = row2 + x
+			ii += 1
+			indices[ii] = row1 + x + 1
+			ii += 1
+			indices[ii] = row2 + x + 1
+			ii += 1
+			indices[ii] = row2 + x
+			ii += 1
 
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)

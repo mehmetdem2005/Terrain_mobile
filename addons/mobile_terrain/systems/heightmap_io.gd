@@ -15,6 +15,7 @@ extends RefCounted
 ## crossings on a 1254² import. On mobile this is the difference between
 ## a sub-second import and a multi-second editor hang.
 
+
 # Convert a Texture2D into a PackedFloat32Array of heights sized to
 # (target_size × target_size). Maps the red channel through max_height/255.
 #
@@ -29,9 +30,7 @@ extends RefCounted
 #   - Bilinear resize is used so terrain features remain smooth across
 #     downscaled imports.
 static func convert_texture_to_heights(
-	src_texture: Texture2D,
-	target_size: int,
-	max_height: float
+	src_texture: Texture2D, target_size: int, max_height: float
 ) -> PackedFloat32Array:
 	if src_texture == null or target_size <= 0:
 		return PackedFloat32Array()

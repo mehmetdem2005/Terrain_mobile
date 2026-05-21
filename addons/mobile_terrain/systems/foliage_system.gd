@@ -18,6 +18,7 @@ extends RefCounted
 const _MIN_RIGHT_LEN_SQ := 0.0001
 const _SCATTER_ACCEPTANCE_BUDGET_MULT := 4  # try 4x density to hit the spacing target
 
+
 # Build a randomised orientation Transform3D for a foliage instance.
 # - up is the surface normal at the placement point
 # - rotation around UP is uniform in [0, TAU)
@@ -45,6 +46,7 @@ static func compute_orientation_transform(pos: Vector3, normal: Vector3) -> Tran
 	tf.origin = pos
 	return tf
 
+
 # Sample up to `count` disc positions inside a circle of radius `radius`
 # centred on `centre`, rejecting candidates closer than `min_spacing` to
 # any already-accepted point. Heights are fetched via `height_lookup`, a
@@ -57,11 +59,7 @@ static func compute_orientation_transform(pos: Vector3, normal: Vector3) -> Tran
 # Returns the accepted world positions; may be shorter than `count` if
 # the spacing target is too dense relative to the disc area.
 static func sample_disc_with_spacing(
-	centre: Vector3,
-	radius: float,
-	count: int,
-	min_spacing: float,
-	height_lookup: Callable
+	centre: Vector3, radius: float, count: int, min_spacing: float, height_lookup: Callable
 ) -> Array[Vector3]:
 	var accepted: Array[Vector3] = []
 	if count <= 0 or radius <= 0.0 or not height_lookup.is_valid():

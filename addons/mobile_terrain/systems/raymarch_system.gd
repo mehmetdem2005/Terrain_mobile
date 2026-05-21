@@ -17,6 +17,7 @@ extends RefCounted
 # Returns: { "pos": Vector3, "normal": Vector3 }. pos == Vector3.INF
 # signals no hit.
 
+
 static func intersect(
 	camera: Camera3D,
 	screen_pos: Vector2,
@@ -29,6 +30,7 @@ static func intersect(
 	var from := camera.project_ray_origin(screen_pos)
 	var dir := camera.project_ray_normal(screen_pos)
 	return intersect_ray(from, dir, height_data, map_size, terrain_origin)
+
 
 # Raw-ray variant for unit tests + scripted use. Same algorithm as
 # intersect() but skips the Camera3D projection step so it can run in

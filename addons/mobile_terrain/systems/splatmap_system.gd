@@ -18,6 +18,7 @@ extends RefCounted
 ## near 1.0 even as the user paints multiple slots over the same area —
 ## the terrain shader's per-fragment normalisation handles the small drift.
 
+
 # Paint into `img` at world position (cx, cz). Returns true on success,
 # false on invalid input (caller logs the appropriate MT-* diagnostic).
 #
@@ -52,19 +53,27 @@ static func paint(
 		return false
 
 	var slot: int = paint_slot
-	brush.iterate_footprint(cx, cz, radius, func(x: int, z: int, falloff: float) -> void:
-		var color: Color = img.get_pixel(x, z)
-		var blend_factor: float = clampf(strength * falloff, 0.0, 1.0)
-		var inv: float = 1.0 - blend_factor
-		color.r *= inv
-		color.g *= inv
-		color.b *= inv
-		color.a *= inv
-		match slot:
-			0: color.r += blend_factor
-			1: color.g += blend_factor
-			2: color.b += blend_factor
-			3: color.a += blend_factor
-		img.set_pixel(x, z, color)
+	brush.iterate_footprint(
+		cx,
+		cz,
+		radius,
+		func(x: int, z: int, falloff: float) -> void:
+			var color: Color = img.get_pixel(x, z)
+			var blend_factor: float = clampf(strength * falloff, 0.0, 1.0)
+			var inv: float = 1.0 - blend_factor
+			color.r *= inv
+			color.g *= inv
+			color.b *= inv
+			color.a *= inv
+			match slot:
+				0:
+					color.r += blend_factor
+				1:
+					color.g += blend_factor
+				2:
+					color.b += blend_factor
+				3:
+					color.a += blend_factor
+			img.set_pixel(x, z, color)
 	)
 	return true

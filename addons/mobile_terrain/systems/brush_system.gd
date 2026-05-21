@@ -20,12 +20,20 @@ var brush_mask_image: Image = null
 var brush_shape: int = 0
 var noise_gen: FastNoiseLite = null
 
-func _init(map_size_: int, brush_mask_: Texture2D, brush_mask_image_: Image, brush_shape_: int, noise_gen_: FastNoiseLite) -> void:
+
+func _init(
+	map_size_: int,
+	brush_mask_: Texture2D,
+	brush_mask_image_: Image,
+	brush_shape_: int,
+	noise_gen_: FastNoiseLite
+) -> void:
 	map_size = map_size_
 	brush_mask = brush_mask_
 	brush_mask_image = brush_mask_image_
 	brush_shape = brush_shape_
 	noise_gen = noise_gen_
+
 
 # Whether (px) falls inside the brush footprint. Mask-based brushes
 # treat the inscribed circle as the bound and let the mask itself
@@ -44,6 +52,7 @@ func is_in_brush(px: Vector2, center: Vector2, radius: float) -> bool:
 			return (dx + dy) <= radius
 		_:  # circle or noise
 			return px.distance_to(center) <= radius
+
 
 # Per-pixel brush strength multiplier (0..1).
 func falloff_at(px: Vector2, center: Vector2, radius: float) -> float:
@@ -92,6 +101,7 @@ func falloff_at(px: Vector2, center: Vector2, radius: float) -> float:
 			return base * n
 		_:
 			return 1.0
+
 
 # Iterate every pixel under the brush footprint and invoke
 # `callback(x: int, z: int, falloff: float)`. The caller is responsible

@@ -8,18 +8,18 @@ extends RefCounted
 # RefCounted instance.
 
 # Chunk lifecycle thresholds.
-const SYNC_BUILD_CHUNK_LIMIT := 256        # > this many chunks → deferred build
-const SYNC_REBUILD_CHUNK_LIMIT := 256      # force_update_all switch point
-const MAX_CHUNK_COUNT := 1024              # auto-bump chunk_size trigger
-const MAX_CHUNK_PER_FRAME := 64            # adaptive _process budget upper bound
-const MIN_CHUNK_PER_FRAME := 4             # adaptive _process budget lower bound
+const SYNC_BUILD_CHUNK_LIMIT := 256  # > this many chunks → deferred build
+const SYNC_REBUILD_CHUNK_LIMIT := 256  # force_update_all switch point
+const MAX_CHUNK_COUNT := 1024  # auto-bump chunk_size trigger
+const MAX_CHUNK_PER_FRAME := 64  # adaptive _process budget upper bound
+const MIN_CHUNK_PER_FRAME := 4  # adaptive _process budget lower bound
 
 # Storage thresholds.
-const AUTO_EXTERNALIZE_THRESHOLD := 262144 # 512² cells → recommend externalisation
+const AUTO_EXTERNALIZE_THRESHOLD := 262144  # 512² cells → recommend externalisation
 
 # Stroke throttling intervals (seconds between applied dabs).
-const MIN_STATIONARY_INTERVAL := 0.04      # ~25 Hz cap for sculpt/paint
-const MIN_OBJECT_INTERVAL := 0.08          # ~12 Hz cap for foliage scatter
+const MIN_STATIONARY_INTERVAL := 0.04  # ~25 Hz cap for sculpt/paint
+const MIN_OBJECT_INTERVAL := 0.08  # ~12 Hz cap for foliage scatter
 
 # Brush slider clamps.
 const BRUSH_RADIUS_MIN := 1.0
@@ -29,10 +29,10 @@ const BRUSH_STRENGTH_MAX := 2.0
 
 # Map sizing clamps.
 const MAP_SIZE_MIN := 4
-const MAP_SIZE_MAX := 16384                # extreme upper bound
+const MAP_SIZE_MAX := 16384  # extreme upper bound
 
 # Splatmap.
-const SPLATMAP_SLOT_COUNT := 4             # RGBA8 → 4 channels
+const SPLATMAP_SLOT_COUNT := 4  # RGBA8 → 4 channels
 
 # Auto-bump chunk size progression for large maps (chosen so map_size %
 # chunk_size == 0 stays valid for typical power-of-two map sizes).
