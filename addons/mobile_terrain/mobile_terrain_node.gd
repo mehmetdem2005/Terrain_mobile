@@ -793,6 +793,12 @@ func update_shader_textures():
 	smat.set_shader_parameter("texture_cell_size", texture_cell_size)
 	smat.set_shader_parameter("rotation_jitter", rotation_jitter)
 	smat.set_shader_parameter("triplanar_blend", triplanar_blend)
+	# V23 (TKT-002 C6): tell the shader to skip triplanar on Forward Mobile.
+	# Triplanar takes 3x texture reads per sample; with 4 slots that exceeds
+	# mid-tier mobile GPU texture-unit budgets. Detection uses RenderingServer
+	# rather than ProjectSettings so it stays correct even when the user
+	# overrides the renderer per-scene.
+	smat.set_shader_parameter("mobile_quality", _is_mobile_renderer())
 	
 	# V21: Bind all four map types per slot. Empty slots get type-correct
 	# default textures (transparent for albedo, flat normal for normals,
@@ -1305,6 +1311,15 @@ func _reset_inline() -> void:
 
 func _load_external_data_if_set() -> void:
 	if external_data_path == "": return
+	# V23 SECURITY (TKT-002 C1): scope-validate path before load().
+	# load() executes any GDScript embedded in the .res before our `is`
+	# type-check fires, so an unscoped path can be a remote-code-execution
+	# vector. We accept only res:// (project-bundled fixtures) or user://
+	# (runtime-managed save data) paths and reject anything else, including
+	# absolute filesystem paths and `..` traversal.
+	if not _is_safe_external_path(external_data_path):
+		push_warning("MobileTerrain3D: refusing to load '%s' — external_data_path must live under res:// or user:// (no path traversal). See TKT-002 C1." % external_data_path)
+		return
 	if not ResourceLoader.exists(external_data_path):
 		push_warning("MobileTerrain3D: external_data_path '%s' not found; using inline data." % external_data_path)
 		return
@@ -1313,6 +1328,11 @@ func _load_external_data_if_set() -> void:
 		push_warning("MobileTerrain3D: '%s' is not a MobileTerrainData resource." % external_data_path)
 		return
 	var data: MobileTerrainData = res
+	# V23 VALIDATION (TKT-002 gap M14): catch corrupted/truncated .res
+	# files before we trust their height_data length downstream.
+	if data.map_size <= 0 or data.height_data.size() != data.map_size * data.map_size:
+		push_warning("MobileTerrain3D: '%s' fails schema check (map_size=%d, height_data.size()=%d). Refusing to load." % [external_data_path, data.map_size, data.height_data.size()])
+		return
 	# V21 CRITICAL ORDER FIX:
 	# Populate height_data BEFORE updating map_size. The _set_map_size
 	# setter cascades into initialize_terrain, which checks
@@ -1331,6 +1351,35 @@ func _load_external_data_if_set() -> void:
 	# the canonical store) and update map_size to match.
 	if data.map_size != map_size and data.map_size > 0:
 		map_size = data.map_size  # cascades through _set_map_size
+
+# V23 SECURITY (TKT-002 C1): whitelist external_data_path to project-
+# bundled (res://) or user-owned (user://) locations. Reject absolute
+# filesystem paths, parent-directory traversal, and any other prefix.
+# The `is_absolute_path()` check covers Windows drives, Unix absolute
+# paths and Godot-localised resource paths uniformly.
+static func _is_safe_external_path(p: String) -> bool:
+	if p == "":
+		return false
+	if "/../" in p or p.ends_with("/..") or p.begins_with("../"):
+		return false
+	if not (p.begins_with("res://") or p.begins_with("user://")):
+		return false
+	return true
+
+# V23 (TKT-002 C6): Forward Mobile / Compatibility renderer detection.
+# Used by the shader binding to skip expensive 3x triplanar sampling on
+# devices that can't afford it. RenderingServer.get_current_rendering_method()
+# returns "forward_plus", "mobile", or "gl_compatibility" in 4.6.2.
+static func _is_mobile_renderer() -> bool:
+	var rs := RenderingServer
+	if rs == null:
+		return false
+	# get_current_rendering_method exists from 4.4+; defensive has_method
+	# in case the symbol moves or we ship on an older runtime.
+	if not rs.has_method("get_current_rendering_method"):
+		return false
+	var method: String = rs.get_current_rendering_method()
+	return method == "mobile" or method == "gl_compatibility"
 
 func get_height(x: int, z: int) -> float:
 	x = clampi(x, 0, map_size - 1)

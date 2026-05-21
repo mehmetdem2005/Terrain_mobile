@@ -41,6 +41,12 @@ uniform float texture_variation : hint_range(0.0, 1.0) = 0.0;
 uniform float texture_cell_size : hint_range(1.0, 50.0) = 10.0;
 uniform float rotation_jitter : hint_range(0.0, 1.0) = 0.0;
 uniform float triplanar_blend : hint_range(0.0, 1.0) = 0.0;
+// V23 (TKT-002 C6): allow the plugin to force planar-only sampling on
+// Forward Mobile / low-end devices. Triplanar takes 3x texture reads per
+// albedo+normal slot; with 4 slots that's 24 samples/fragment, blowing
+// past mid-tier mobile GPU texture-unit budgets (Adreno 650/Mali-G68).
+// The plugin sets mobile_quality=true on Forward Mobile renderers.
+uniform bool mobile_quality = false;
 
 varying vec3 v_world_pos;
 varying vec3 v_world_normal;
@@ -95,7 +101,10 @@ vec3 _mt_triplanar(sampler2D s, vec3 wpos) {
 
 vec3 _mt_albedo_sample(sampler2D s, vec3 wpos) {
 	vec3 xz = _mt_sample_var(s, wpos.xz * tex_scale);
-	if (triplanar_blend < 0.001) return xz;
+	// V23 (TKT-002 C6): bypass triplanar on mobile_quality. Saves up to
+	// 18 texture reads/fragment with 4 active slots, keeps the plugin
+	// runnable on Forward Mobile without breaking desktop visuals.
+	if (mobile_quality || triplanar_blend < 0.001) return xz;
 	vec3 tri = _mt_triplanar(s, wpos);
 	return mix(xz, tri, triplanar_blend);
 }

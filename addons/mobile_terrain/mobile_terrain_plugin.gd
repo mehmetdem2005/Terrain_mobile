@@ -535,7 +535,12 @@ func _build_brush_mask_picker() -> void:
 	# Anchor as child of the editor base so it lives across scene changes.
 	# We can't add directly to ui_container — popups want to be at the top
 	# of the tree so they don't get clipped by containers.
-	get_editor_interface().get_base_control().add_child(brush_mask_popup)
+	# V23 (TKT-002 C7): null-guarded — leave popup unparented if base is missing.
+	var base := _safe_editor_base_control()
+	if base != null:
+		base.add_child(brush_mask_popup)
+	else:
+		push_warning("MobileTerrain3D: editor base control unavailable; brush mask popup unparented (TKT-002 C7).")
 	
 	var outer := VBoxContainer.new()
 	outer.add_theme_constant_override("separation", 6)
@@ -880,8 +885,14 @@ func _build_asset_manager_ui():
 	obj_list_vbox = VBoxContainer.new()
 	obj_vbox.add_child(obj_list_vbox)
 	
-	var editor_viewport = get_editor_interface().get_editor_main_screen()
-	editor_viewport.add_child(asset_manager_panel)
+	# V23 (TKT-002 C7): null-guarded — leave the asset panel unparented if
+	# the main screen isn't available yet. _toggle_asset_manager will
+	# re-parent on first open as a fallback.
+	var editor_viewport := _safe_editor_main_screen()
+	if editor_viewport != null:
+		editor_viewport.add_child(asset_manager_panel)
+	else:
+		push_warning("MobileTerrain3D: editor main screen unavailable; asset manager will reparent on first open (TKT-002 C7).")
 	asset_manager_panel.position = Vector2(20, 80)
 	# V21: bigger height — each slot now has 7 picker rows (Albedo,
 	# Normal, Roughness, AO + extra-label + Height, Metallic, Emission)
@@ -1534,7 +1545,13 @@ func _exit_tree() -> void:
 	# V20 FIX: defensive disconnect in case the plugin is being torn down
 	# while a terrain was still selected.
 	_disconnect_placement_signal(selected_node)
-	if ui_container: 
+	# V23 (TKT-002 C2): explicit signal disconnect before queue_free. The
+	# UI subtree has ~30 connect() calls scattered across _build_main_ui
+	# and _build_asset_manager_ui; without explicit disconnects, queue_free
+	# is deferred and Callables can fire against a half-freed plugin on
+	# hot-reload. Walk the trees and tear every signal down first.
+	if ui_container:
+		_disconnect_all_signals_recursive(ui_container)
 		remove_control_from_container(EditorPlugin.CONTAINER_SPATIAL_EDITOR_MENU, ui_container)
 		ui_container.queue_free()
 	# is_instance_valid guard: the cursor may have been auto-freed if its
@@ -1543,10 +1560,49 @@ func _exit_tree() -> void:
 	if is_instance_valid(brush_cursor):
 		_detach_brush_cursor()
 		brush_cursor.queue_free()
-	if asset_manager_panel: 
+	if asset_manager_panel:
+		_disconnect_all_signals_recursive(asset_manager_panel)
 		asset_manager_panel.queue_free()
 	if is_instance_valid(brush_mask_popup):
+		_disconnect_all_signals_recursive(brush_mask_popup)
 		brush_mask_popup.queue_free()
+
+# V23 (TKT-002 C2): walk a Control tree and disconnect every signal
+# connection that targets a Callable owned by the editor-side plugin.
+# Built-in tree/notification signals are left alone — only the user-level
+# UI signals (pressed, value_changed, item_selected, toggled, resource_changed,
+# text_changed, etc.) carry plugin callbacks. We filter by callable ownership
+# so framework-internal connections (theme cache, focus tracking) survive.
+func _disconnect_all_signals_recursive(node: Node) -> void:
+	if node == null:
+		return
+	for sig in node.get_signal_list():
+		var sig_name: StringName = sig.name
+		for conn in node.get_signal_connection_list(sig_name):
+			var cb: Callable = conn.callable
+			# Only tear down our own callbacks — disconnecting engine-internal
+			# signals can leave the editor in a broken state on the same node.
+			if cb.get_object() == self:
+				node.disconnect(sig_name, cb)
+	for child in node.get_children():
+		_disconnect_all_signals_recursive(child)
+
+# V23 (TKT-002 C7): null-safe access to EditorInterface.get_base_control().
+# EditorInterface itself is non-null in any real EditorPlugin context, but
+# the base Control can be null during very-early plugin load or while the
+# editor is reloading scripts. Chained access at the call site would crash
+# in those windows; this helper makes the caller decide whether to bail.
+func _safe_editor_base_control() -> Control:
+	var ei := get_editor_interface()
+	if ei == null:
+		return null
+	return ei.get_base_control()
+
+func _safe_editor_main_screen() -> Control:
+	var ei := get_editor_interface()
+	if ei == null:
+		return null
+	return ei.get_editor_main_screen()
 
 func _handles(object: Object) -> bool: 
 	return object is TerrainNode
