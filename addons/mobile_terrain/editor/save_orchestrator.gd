@@ -55,6 +55,14 @@ func save_with_externalized_terrains(edited_root: Node, restore_host: Object) ->
 				terrain.external_data_path = ""
 				terrain._suppress_external_path_setter = false
 			terrain._externalize_data(true)
+			# V22 Phase 4: if externalisation failed (path still empty)
+			# the heavy data will be serialised inline. Warn loudly so
+			# the user can see WHICH terrain got the inline fallback.
+			if terrain.external_data_path == "":
+				TerrainDiagnostics.warn(
+					"MT-W14: Externalize failed for terrain '%s' (%d cells). Heavy data will stay inline in .tscn." \
+						% [terrain.name, terrain.height_data.size()]
+				)
 		if terrain.external_data_path != "" and terrain.height_data.size() > 0:
 			backups.append({
 				"node": terrain,
@@ -77,8 +85,12 @@ func save_with_externalized_terrains(edited_root: Node, restore_host: Object) ->
 		TerrainDiagnostics.error(TerrainDiagnostics.E_SAVE_RESOURCE_FAILED, [scene_path, save_err])
 
 	# Defer restore so any engine-side flush completes before we mutate
-	# the live nodes again.
-	if restore_host != null and restore_host.has_method("_terrain_restore_callback"):
+	# the live nodes again. V22 Phase 4 fix: also check is_instance_valid
+	# so a queued callback can't hit a freed plugin (the user could
+	# disable the plugin or close the scene between pack and the deferred
+	# invocation).
+	if restore_host != null and is_instance_valid(restore_host) \
+			and restore_host.has_method("_terrain_restore_callback"):
 		restore_host.call_deferred("_terrain_restore_callback", backups)
 	else:
 		_restore(backups)

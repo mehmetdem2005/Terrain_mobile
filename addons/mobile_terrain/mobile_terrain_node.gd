@@ -1190,6 +1190,17 @@ func _externalize_data(val: bool) -> void:
 		if safe_name == "":
 			safe_name = "terrain"  # Fallback for all-special-char names
 		target_path = scene_path.get_basename() + "_" + safe_name + "_terrain.res"
+		# V22 Phase 4 fix (audit-save-multi-terrain path collision): if
+		# two terrains share a sanitised name (eg. duplicated by Ctrl+D
+		# in the editor), append a numeric suffix so the second one
+		# doesn't overwrite the first's .res file.
+		var collision: int = 0
+		while ResourceLoader.exists(target_path):
+			collision += 1
+			if collision > 64:
+				# Pathological case — give up to avoid an infinite loop.
+				break
+			target_path = scene_path.get_basename() + "_" + safe_name + "_" + str(collision) + "_terrain.res"
 	
 	# Build the resource. We deliberately COPY the byte arrays via duplicate()
 	# rather than passing the live references; otherwise the resource and
@@ -1456,22 +1467,31 @@ func initialize_terrain():
 	# latency that users notice on common map sizes. Threshold tuned by
 	# eye: 256 chunks (16×16) is the largest map that builds in ~1 frame
 	# on mid-tier mobile.
-	const SYNC_BUILD_CHUNK_LIMIT := 256
+	# V22 Phase 4: use centralised constant. Old local const removed.
 	var total_chunks: int = num_chunks * num_chunks
-	var build_sync: bool = total_chunks <= SYNC_BUILD_CHUNK_LIMIT
+	var build_sync: bool = total_chunks <= TerrainConstants.SYNC_BUILD_CHUNK_LIMIT
 	for cz in range(num_chunks):
 		for cx in range(num_chunks):
 			_create_chunk(cx, cz, build_sync)
-	_rebuilding_terrain = false
-	# V22: replay any setter that deferred itself while we were rebuilding.
+	# V22 FIX (Phase 4 regression audit #3): keep _rebuilding_terrain true
+	# during the deferred replay so a setter cascading inside the pending
+	# map_size / chunk_size assignment doesn't enter a second concurrent
+	# initialize_terrain. Cleared only after both replays complete.
 	if _deferred_map_size != 0 and _deferred_map_size != map_size:
 		var pending: int = _deferred_map_size
 		_deferred_map_size = 0
+		# Setter sees _rebuilding_terrain==true, defers itself; we replay
+		# manually with the guard down.
+		_rebuilding_terrain = false
 		map_size = pending
+		_rebuilding_terrain = true
 	if _deferred_chunk_size != 0 and _deferred_chunk_size != chunk_size:
 		var pending: int = _deferred_chunk_size
 		_deferred_chunk_size = 0
+		_rebuilding_terrain = false
 		chunk_size = pending
+		_rebuilding_terrain = true
+	_rebuilding_terrain = false
 
 func _create_chunk(cx: int, cz: int, build_now: bool = true):
 	var chunk = MeshInstance3D.new()
@@ -2010,29 +2030,26 @@ func _apply_brush_single(hit_point: Vector3):
 	if current_tool == 7: # Paint
 		_paint_splatmap(local_pos.x, local_pos.z, brush_radius, brush_strength * 0.1)
 		return
-	if current_tool == 0 or current_tool == 1: 
-		var dir = 1.0 if current_tool == 0 else -1.0
-		# V21: × 0.5 internal scale (was 1.0). At the old scale, a
-		# stationary tap with default strength 0.2 raised the centre by
-		# 5 units/sec (0.2 * 25Hz). Tap with max 2.0 (was 5.0) → 50
-		# units/sec — still fast but recoverable. Without this halving
-		# the centre would jump in big visible steps each frame.
-		_modify_height(local_pos.x, local_pos.z, brush_radius, brush_strength * dir * 0.5)
-	elif current_tool == 2: 
-		# V21 BUGFIX: Düzleştir was completely ignoring brush_strength —
-		# slider made no difference, every dab was a hard 50%-pull
-		# (the *0.5 inside _flatten_height). Now strength scales the
-		# pull amount, so low strength gives gentle flattening, high
-		# strength locks to the picked elevation in one tap.
-		_flatten_height(local_pos.x, local_pos.z, brush_radius, local_pos.y, brush_strength)
-	elif current_tool == 3: 
-		_smooth_height(local_pos.x, local_pos.z, brush_radius, brush_strength)
-	elif current_tool == 4: 
-		_noise_height(local_pos.x, local_pos.z, brush_radius, brush_strength)
-	elif current_tool == 5: 
-		_terrace_height(local_pos.x, local_pos.z, brush_radius, brush_strength)
-	elif current_tool == 6: # Erosion
-		_erode_height(local_pos.x, local_pos.z, brush_radius, brush_strength)
+	# V22 Phase 4: sculpt ops delegated to SculptOps. The brush state +
+	# noise generator are wrapped in a per-dab BrushSystem instance, the
+	# chunk-dirty callback is bound here so SculptOps doesn't need to
+	# know about the node's internals.
+	var brush := BrushSystem.new(map_size, brush_mask, _brush_mask_image, brush_shape, noise_gen)
+	var mark_dirty := func(x: int, z: int) -> void: _mark_chunk_dirty(x, z)
+	match current_tool:
+		0, 1:
+			var dir: float = 1.0 if current_tool == 0 else -1.0
+			SculptOps.modify_height(brush, height_data, map_size, mark_dirty, local_pos.x, local_pos.z, brush_radius, brush_strength * dir * 0.5)
+		2:
+			SculptOps.flatten_height(brush, height_data, map_size, mark_dirty, local_pos.x, local_pos.z, brush_radius, local_pos.y, brush_strength)
+		3:
+			height_data = SculptOps.smooth_height(brush, height_data, map_size, mark_dirty, local_pos.x, local_pos.z, brush_radius, brush_strength)
+		4:
+			SculptOps.noise_height(brush, height_data, map_size, mark_dirty, local_pos.x, local_pos.z, brush_radius, brush_strength)
+		5:
+			SculptOps.terrace_height(brush, height_data, map_size, mark_dirty, local_pos.x, local_pos.z, brush_radius, brush_strength)
+		6:  # erosion
+			height_data = SculptOps.erode_height(brush, height_data, map_size, mark_dirty, local_pos.x, local_pos.z, brush_radius, brush_strength)
 
 func _paint_splatmap(cx: float, cz: float, radius: float, strength: float):
 	# V22: explicit zero-based range guard; warns on slot 5+ instead of
@@ -2064,77 +2081,34 @@ func _paint_splatmap(cx: float, cz: float, radius: float, strength: float):
 	# with x >= img.get_width() returns the wrong pixel without erroring.
 	# Bail rather than write garbage.
 	if img.get_width() != map_size or img.get_height() != map_size:
-		push_warning("MobileTerrain3D: splatmap image %dx%d != map_size %d; skipping paint dab. Recommend resizing terrain to trigger rebuild." % [img.get_width(), img.get_height(), map_size])
+		TerrainDiagnostics.error(TerrainDiagnostics.E_SPLATMAP_SIZE_DRIFT, [img.get_width(), img.get_height(), map_size])
 		return
-	
-	var min_x = max(0, int(cx-radius))
-	# V20 FIX (bonus off-by-one): `max_x = min(map_size, ...)` instead of
-	# `min(map_size-1, ...)`. With `range(min_x, max_x)` being exclusive
-	# at the end, the old code stopped at `map_size-2` and the last row
-	# (index `map_size-1`) was never paintable/sculptable. Now `range`
-	# can reach the final index. Out-of-bounds neighbor reads are still
-	# protected by the clampi inside `get_height`. The same one-character
-	# fix has been applied to all 6 sculpting brushes (_modify, _flatten,
-	# _smooth, _noise, _terrace, _erode) — search for "int(cx+radius)+1"
-	# to find each site. Note that _erode_height's *neighbor* scan was
-	# already correct (`min(map_size, z+2)`); the author got it right
-	# inside the inner loop but missed it on the outer brush loop.
-	var max_x = min(map_size, int(cx+radius)+1)
-	var min_z = max(0, int(cz-radius))
-	var max_z = min(map_size, int(cz+radius)+1)
-	
-	for z in range(min_z, max_z):
-		for x in range(min_x, max_x):
-			var px = Vector2(x, z)
-			if _is_in_brush(px, Vector2(cx, cz), radius):
-				var falloff = brush_shape_falloff(px, Vector2(cx, cz), radius)
-				var color = img.get_pixel(x, z)
-				# V20 FIX: competitive blending replaces additive-plus-normalize.
-				#
-				# Old approach: lerp ONE channel toward 1.0, then divide
-				# every channel by their sum. Two problems:
-				#
-				# 1) Other slots never reach 0. Painting pure slot 0 over
-				#    a (0, 1, 0, 0) pixel at full strength only got you to
-				#    ~(0.33, 0.67, 0, 0) per stroke, asymptoting forever.
-				#    There was literally no way to clear slot 1.
-				# 2) The post-divide normalize masked the bug — the shader
-				#    also normalizes, so storing wrong ratios still
-				#    produced *some* visible blend. Two layers of math
-				#    hid that the stored data didn't match user intent.
-				#
-				# Competitive paint: shrink EVERY channel by (1 - bf),
-				# then boost the target channel by bf. Algebra: if the
-				# old sum was 1, the new sum is sum*(1-bf) + bf == 1, so
-				# the splatmap stays normalized for free — no division
-				# needed. Painting slot 0 fully over (0, 1, 0, 0) now
-				# yields (1, 0, 0, 0): slot 1 cleared, as users expect.
-				#
-				# Defensive clamp: blend_factor must stay in [0, 1] or
-				# `inv` could go negative and corrupt the pixel. The
-				# caller scales by 0.1 so this is theoretical, but if
-				# someone later changes that scaling we don't want a
-				# silent data-corruption bug to appear.
-				var blend_factor = clampf(strength * falloff, 0.0, 1.0)
-				var inv = 1.0 - blend_factor
-				color.r *= inv
-				color.g *= inv
-				color.b *= inv
-				color.a *= inv
-				if current_paint_slot == 0:
-					color.r += blend_factor
-				elif current_paint_slot == 1:
-					color.g += blend_factor
-				elif current_paint_slot == 2:
-					color.b += blend_factor
-				elif current_paint_slot == 3:
-					color.a += blend_factor
-				img.set_pixel(x, z, color)
+
+	# V22 Phase 4: route through BrushSystem.iterate_footprint so the
+	# loop bounds and mask sampling are shared with the sculpt ops.
+	# Competitive blend (shrink-all then boost-target) keeps the splatmap
+	# normalised without an explicit divide.
+	var brush := BrushSystem.new(map_size, brush_mask, _brush_mask_image, brush_shape, noise_gen)
+	var slot: int = current_paint_slot
+	brush.iterate_footprint(cx, cz, radius, func(x: int, z: int, falloff: float) -> void:
+		var color: Color = img.get_pixel(x, z)
+		var blend_factor: float = clampf(strength * falloff, 0.0, 1.0)
+		var inv: float = 1.0 - blend_factor
+		color.r *= inv
+		color.g *= inv
+		color.b *= inv
+		color.a *= inv
+		match slot:
+			0: color.r += blend_factor
+			1: color.g += blend_factor
+			2: color.b += blend_factor
+			3: color.a += blend_factor
+		img.set_pixel(x, z, color)
+	)
 
 	# V22: null guard. splatmap_texture_local can be nulled between
 	# start_stroke and now in pathological cases (eg user resized map
-	# mid-stroke and the rebuild raced ahead of our paint dab). Without
-	# this check, .update() would NPE.
+	# mid-stroke and the rebuild raced ahead of our paint dab).
 	if splatmap_texture_local != null:
 		splatmap_texture_local.update(img)
 	# V20: inside a stroke we leave byte-array sync and shader rebind to
@@ -2180,240 +2154,6 @@ func _set_brush_mask(val: Texture2D) -> void:
 	_brush_mask_image = img
 
 # V19 PRO: Advanced Shape detection
-func _is_in_brush(px: Vector2, center: Vector2, radius: float) -> bool:
-	# V21: with a brush_mask set, the footprint is always the inscribed
-	# circle (the mask itself zeroes out the corners). Legacy shapes
-	# keep their original "is this pixel even considered" tests so old
-	# saved scenes behave identically.
-	if brush_mask != null and _brush_mask_image != null:
-		return px.distance_to(center) <= radius
-	if brush_shape == 2: # Kare
-		var dx = abs(px.x - center.x)
-		var dy = abs(px.y - center.y)
-		return dx <= radius and dy <= radius
-	elif brush_shape == 3: # Elmas
-		var dx = abs(px.x - center.x)
-		var dy = abs(px.y - center.y)
-		return (dx + dy) <= radius
-	else: # Yuvarlak / Noise
-		return px.distance_to(center) <= radius
-
-# V21: brush footprint strength at a pixel.
-#
-# When a `brush_mask` Texture2D is set, this samples the cached mask
-# Image in unit-disc UV space: centre of the brush maps to mask UV
-# (0.5, 0.5), unit-circle edge maps to the mask edge. Sampling the
-# mask's red channel gives a 0..1 multiplier — that's what becomes
-# the brush falloff for THIS pixel. Outside the unit circle the
-# mask's pre-baked black margin returns 0, so brushes never bleed
-# past their radius.
-#
-# When no mask is set we fall back to the original V19 hard-coded
-# shapes — keeps old scenes painting exactly as they used to.
-func brush_shape_falloff(px: Vector2, center: Vector2, radius: float) -> float:
-	if brush_mask != null and _brush_mask_image != null:
-		# Map (px - center) ∈ [-radius, +radius]² → mask UV ∈ [0, 1]².
-		# Clamp at the texture edge to avoid out-of-bounds get_pixel.
-		var u: float = (px.x - center.x) / radius * 0.5 + 0.5
-		var v: float = (px.y - center.y) / radius * 0.5 + 0.5
-		var w: int = _brush_mask_image.get_width()
-		var h: int = _brush_mask_image.get_height()
-		var ix: int = clampi(int(u * w), 0, w - 1)
-		var iy: int = clampi(int(v * h), 0, h - 1)
-		return _brush_mask_image.get_pixel(ix, iy).r
-	
-	# Legacy V19 falloffs (no mask) — kept verbatim.
-	var dist = px.distance_to(center)
-	var norm_dist = clampf(dist / radius, 0.0, 1.0)
-	
-	if brush_shape == 0: # Yumuşak
-		return norm_dist * norm_dist * (3.0 - 2.0 * norm_dist) * -1.0 + 1.0 
-	elif brush_shape == 1: # Keskin
-		return 1.0 
-	elif brush_shape == 2: # Kare
-		var dx = abs(px.x - center.x)
-		var dy = abs(px.y - center.y)
-		var max_d = max(dx, dy)
-		return 1.0 - clampf(max_d / radius, 0.0, 1.0) # Soft edges on square
-	elif brush_shape == 3: # Elmas
-		var dx = abs(px.x - center.x)
-		var dy = abs(px.y - center.y)
-		return 1.0 - clampf((dx + dy) / radius, 0.0, 1.0)
-	elif brush_shape == 4: # Noise
-		var base = norm_dist * norm_dist * (3.0 - 2.0 * norm_dist) * -1.0 + 1.0 
-		var n = (noise_gen.get_noise_2d(px.x, px.y) + 1.0) * 0.5
-		return base * n
-		
-	return 1.0 
-
-func _modify_height(cx: float, cz: float, radius: float, strength: float):
-	var min_x = max(0, int(cx-radius))
-	var max_x = min(map_size, int(cx+radius)+1)
-	var min_z = max(0, int(cz-radius))
-	var max_z = min(map_size, int(cz+radius)+1)
-	for z in range(min_z, max_z):
-		for x in range(min_x, max_x):
-			var px = Vector2(x, z)
-			if _is_in_brush(px, Vector2(cx, cz), radius):
-				var f = brush_shape_falloff(px, Vector2(cx, cz), radius)
-				height_data[z * map_size + x] += strength * f
-				_mark_chunk_dirty(x, z)
-				
-func _flatten_height(cx: float, cz: float, radius: float, target_h: float, strength: float = 0.5):
-	# V21: strength is now an explicit parameter (was hard-coded *0.5).
-	# The 0.5 default keeps the V20 behaviour for any other call sites
-	# but the dispatcher in _apply_brush_single now passes brush_strength,
-	# so the user's slider actually matters here.
-	var min_x = max(0, int(cx-radius))
-	var max_x = min(map_size, int(cx+radius)+1)
-	var min_z = max(0, int(cz-radius))
-	var max_z = min(map_size, int(cz+radius)+1)
-	for z in range(min_z, max_z):
-		for x in range(min_x, max_x):
-			var px = Vector2(x, z)
-			if _is_in_brush(px, Vector2(cx, cz), radius):
-				var idx = z * map_size + x
-				var f = brush_shape_falloff(px, Vector2(cx, cz), radius)
-				height_data[idx] += (target_h - height_data[idx]) * f * strength
-				_mark_chunk_dirty(x, z)
-				
-func _smooth_height(cx: float, cz: float, radius: float, strength: float):
-	var min_x = max(0, int(cx-radius))
-	var max_x = min(map_size, int(cx+radius)+1)
-	var min_z = max(0, int(cz-radius))
-	var max_z = min(map_size, int(cz+radius)+1)
-	# V20 FIX (bug B1): snapshot height_data for reads, write to a temp
-	# buffer, then swap. The old code read AND wrote `height_data` inside
-	# the same loop, which made the smoothing order-dependent: by the
-	# time cell (x, z) computed its neighbor average, cells (x-1, z-1),
-	# (x-1, z), (x-1, z+1), (x, z-1) had already been smoothed in this
-	# very pass. (x, z) then averaged a mix of original and already-
-	# smoothed values, smearing the result toward the upper-left scan
-	# origin. The bias is small per dab but accumulates over the dozens
-	# of dabs in a typical stroke into visibly asymmetric smoothing.
-	#
-	# Erosion solved this same problem with the same `duplicate()` +
-	# write-to-temp-then-swap pattern (see _erode_height); doing it here
-	# brings the two destructive-neighbor-read tools into alignment.
-	# Note: PackedFloat32Array uses copy-on-write in Godot 4, so reading
-	# from `height_data` and writing to the `temp_heights` clone doesn't
-	# fork the source — only one extra 256KB allocation per dab.
-	var temp_heights = height_data.duplicate()
-	for z in range(min_z, max_z):
-		for x in range(min_x, max_x):
-			var px = Vector2(x, z)
-			if _is_in_brush(px, Vector2(cx, cz), radius):
-				var idx = z * map_size + x
-				var f = brush_shape_falloff(px, Vector2(cx, cz), radius)
-				var avg = 0.0
-				var c = 0
-				for nz in range(max(0, z-1), min(map_size, z+2)):
-					for nx in range(max(0, x-1), min(map_size, x+2)): 
-						avg += height_data[nz * map_size + nx]
-						c += 1
-				temp_heights[idx] = lerpf(height_data[idx], avg/c, strength * f * 0.5)
-				_mark_chunk_dirty(x, z)
-	height_data = temp_heights
-				
-func _noise_height(cx: float, cz: float, radius: float, strength: float):
-	# V22 FIX (audit-brush-noise-determinism): switched from randf_range to
-	# noise_gen.get_noise_2d so the same (x, z) always produces the same
-	# offset. randf_range was global-RNG seeded, which made undo→redo replay
-	# generate DIFFERENT random offsets — the redo state diverged from
-	# what the user had just undone. Spatial noise stays deterministic
-	# across replays.
-	var min_x = max(0, int(cx-radius))
-	var max_x = min(map_size, int(cx+radius)+1)
-	var min_z = max(0, int(cz-radius))
-	var max_z = min(map_size, int(cz+radius)+1)
-	for z in range(min_z, max_z):
-		for x in range(min_x, max_x):
-			var px = Vector2(x, z)
-			if _is_in_brush(px, Vector2(cx, cz), radius):
-				var f = brush_shape_falloff(px, Vector2(cx, cz), radius)
-				# get_noise_2d returns roughly [-1, 1]; scale to [-strength, strength].
-				var n: float = noise_gen.get_noise_2d(float(x), float(z))
-				height_data[z * map_size + x] += n * strength * f * 0.2
-				_mark_chunk_dirty(x, z)
-				
-func _terrace_height(cx: float, cz: float, radius: float, strength: float):
-	var s = max(1.0, strength * 5.0) 
-	var min_x = max(0, int(cx-radius))
-	var max_x = min(map_size, int(cx+radius)+1)
-	var min_z = max(0, int(cz-radius))
-	var max_z = min(map_size, int(cz+radius)+1)
-	for z in range(min_z, max_z):
-		for x in range(min_x, max_x):
-			var px = Vector2(x, z)
-			if _is_in_brush(px, Vector2(cx, cz), radius):
-				var idx = z * map_size + x
-				var f = brush_shape_falloff(px, Vector2(cx, cz), radius)
-				var cur = height_data[idx]
-				var tar = round(cur / s) * s
-				height_data[idx] = lerpf(cur, tar, f * 0.5)
-				_mark_chunk_dirty(x, z)
-
-# V19 PRO: Advanced Thermal Erosion Tool
-func _erode_height(cx: float, cz: float, radius: float, strength: float):
-	var min_x = max(0, int(cx-radius))
-	var max_x = min(map_size, int(cx+radius)+1)
-	var min_z = max(0, int(cz-radius))
-	var max_z = min(map_size, int(cz+radius)+1)
-	var temp_heights = height_data.duplicate()
-	var erosion_rate = strength * 0.1
-	
-	for z in range(min_z, max_z):
-		for x in range(min_x, max_x):
-			var px = Vector2(x, z)
-			if _is_in_brush(px, Vector2(cx, cz), radius):
-				var idx = z * map_size + x
-				var h = height_data[idx]
-				var f = brush_shape_falloff(px, Vector2(cx, cz), radius)
-				
-				# Find lowest neighbor to move material to
-				var lowest_h = h
-				var lowest_idx = -1
-				
-				for nz in range(max(0, z-1), min(map_size, z+2)):
-					for nx in range(max(0, x-1), min(map_size, x+2)):
-						var n_idx = nz * map_size + nx
-						var nh = height_data[n_idx]
-						if nh < lowest_h:
-							lowest_h = nh
-							lowest_idx = n_idx
-				
-				# If there is a lower neighbor, move material
-				if lowest_idx != -1:
-					var diff = h - lowest_h
-					var amount = min(diff * 0.5, erosion_rate) * f
-					temp_heights[idx] -= amount
-					temp_heights[lowest_idx] += amount
-					# V20 FIX: mark BOTH source AND destination chunks dirty.
-					#
-					# Old code marked only (x, z)'s chunk. When erosion moved
-					# material across a chunk boundary — which is exactly the
-					# typical case at the radius edge of a brush stroke — the
-					# destination chunk's mesh never got rebuilt. The result
-					# was a visible vertical step at the seam every 32 cells:
-					# erosion data correct, mesh stale.
-					#
-					# Convert the linear destination index back to (nx, nz)
-					# and mark its chunk too. _mark_chunk_dirty already
-					# handles dedup (Dictionary keyed by Vector2i) and border
-					# propagation, so calling it twice with cells in the same
-					# chunk is harmless — at worst a few extra dict inserts.
-					_mark_chunk_dirty(x, z)
-					var dest_z: int = lowest_idx / map_size
-					var dest_x: int = lowest_idx % map_size
-					_mark_chunk_dirty(dest_x, dest_z)
-				# Note: the dirty mark used to live OUTSIDE this `if`, which
-				# meant a perfectly flat area under the brush still got every
-				# chunk re-meshed even though nothing changed. Moving the
-				# mark inside the if is a small efficiency win on top of the
-				# correctness fix.
-				
-	height_data = temp_heights
-
 func _mark_chunk_dirty(x: int, z: int):
 	# V20 FIX (bug M1): symmetric cross-chunk propagation for normal-calc
 	# dependencies.
