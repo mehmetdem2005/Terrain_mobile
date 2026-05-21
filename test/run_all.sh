@@ -4,7 +4,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-echo "==> 1/10 parse check"
+echo "==> 1/11 parse check"
 bash "$ROOT/test/parse_check.sh"
 
 # Shared fixture setup: symlink the addon + test scripts into the fixture
@@ -24,41 +24,45 @@ fi
 cd "$SAVE_TEST"
 godot --headless --import --quit >/dev/null 2>&1 || true
 
-echo "==> 2/10 save roundtrip"
+echo "==> 2/11 save roundtrip"
 godot --headless --script integration_tests/save_roundtrip.gd 2>&1 | tee /tmp/save_roundtrip.log
 grep -q "^SAVE_ROUNDTRIP_OK" /tmp/save_roundtrip.log
 
-echo "==> 3/10 multi-terrain save"
+echo "==> 3/11 multi-terrain save"
 godot --headless --script integration_tests/multi_terrain_save.gd 2>&1 | tee /tmp/multi_terrain.log
 grep -q "^MULTI_TERRAIN_OK" /tmp/multi_terrain.log
 
-echo "==> 4/10 raymarch unit test"
+echo "==> 4/11 raymarch unit test"
 godot --headless --script unit_tests/test_raymarch_system.gd 2>&1 | tee /tmp/raymarch.log
 grep -q "^RAYMARCH_TEST_OK" /tmp/raymarch.log
 
-echo "==> 5/10 sculpt ops unit test"
+echo "==> 5/11 sculpt ops unit test"
 godot --headless --script unit_tests/test_sculpt_ops.gd 2>&1 | tee /tmp/sculpt_ops.log
 grep -q "^SCULPT_OPS_TEST_OK" /tmp/sculpt_ops.log
 
-echo "==> 6/10 path safety unit test (TKT-002 C1 regression)"
+echo "==> 6/11 path safety unit test (TKT-002 C1 regression)"
 godot --headless --script unit_tests/test_path_safety.gd 2>&1 | tee /tmp/path_safety.log
 grep -q "^PATH_SAFETY_TEST_OK" /tmp/path_safety.log
 
-echo "==> 7/10 brush system unit test (TKT-002 C4 regression)"
+echo "==> 7/11 brush system unit test (TKT-002 C4 regression)"
 godot --headless --script unit_tests/test_brush_system.gd 2>&1 | tee /tmp/brush_system.log
 grep -q "^BRUSH_SYSTEM_TEST_OK" /tmp/brush_system.log
 
-echo "==> 8/10 splatmap system unit test (TKT-003 Phase A.1 extraction)"
+echo "==> 8/11 splatmap system unit test (TKT-003 Phase A.1 extraction)"
 godot --headless --script unit_tests/test_splatmap_system.gd 2>&1 | tee /tmp/splatmap_system.log
 grep -q "^SPLATMAP_SYSTEM_TEST_OK" /tmp/splatmap_system.log
 
-echo "==> 9/10 heightmap io unit test (TKT-003 Phase A.2 extraction)"
+echo "==> 9/11 heightmap io unit test (TKT-003 Phase A.2 extraction)"
 godot --headless --script unit_tests/test_heightmap_io.gd 2>&1 | tee /tmp/heightmap_io.log
 grep -q "^HEIGHTMAP_IO_TEST_OK" /tmp/heightmap_io.log
 
-echo "==> 10/10 foliage system unit test (TKT-003 Phase A.3 extraction)"
+echo "==> 10/11 foliage system unit test (TKT-003 Phase A.3 extraction)"
 godot --headless --script unit_tests/test_foliage_system.gd 2>&1 | tee /tmp/foliage_system.log
 grep -q "^FOLIAGE_SYSTEM_TEST_OK" /tmp/foliage_system.log
+
+echo "==> 11/11 chunk renderer unit test (TKT-003 Phase A.4 extraction)"
+godot --headless --script unit_tests/test_chunk_renderer.gd 2>&1 | tee /tmp/chunk_renderer.log
+grep -q "^CHUNK_RENDERER_TEST_OK" /tmp/chunk_renderer.log
 
 echo
 echo "ALL TESTS PASSED"
