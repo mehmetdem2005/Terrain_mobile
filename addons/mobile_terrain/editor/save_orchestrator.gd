@@ -23,6 +23,7 @@ extends RefCounted
 
 const _TerrainNode := preload("res://addons/mobile_terrain/mobile_terrain_node.gd")
 
+
 # Drive a full Plan B save against an editor-edited scene root. Returns
 # the ResourceSaver.save error code (OK on success). Safe to call from
 # any frame; the deferred restore is owned by `restore_host` so it lives
@@ -59,16 +60,26 @@ func save_with_externalized_terrains(edited_root: Node, restore_host: Object) ->
 			# the heavy data will be serialised inline. Warn loudly so
 			# the user can see WHICH terrain got the inline fallback.
 			if terrain.external_data_path == "":
-				TerrainDiagnostics.warn(
-					"MT-W14: Externalize failed for terrain '%s' (%d cells). Heavy data will stay inline in .tscn." \
-						% [terrain.name, terrain.height_data.size()]
+				(
+					TerrainDiagnostics
+					. warn(
+						(
+							"MT-W14: Externalize failed for terrain '%s' (%d cells). Heavy data will stay inline in .tscn."
+							% [terrain.name, terrain.height_data.size()]
+						)
+					)
 				)
 		if terrain.external_data_path != "" and terrain.height_data.size() > 0:
-			backups.append({
-				"node": terrain,
-				"height_data": terrain.height_data,
-				"splatmap_texture_local": terrain.splatmap_texture_local,
-			})
+			(
+				backups
+				. append(
+					{
+						"node": terrain,
+						"height_data": terrain.height_data,
+						"splatmap_texture_local": terrain.splatmap_texture_local,
+					}
+				)
+			)
 			terrain.height_data = PackedFloat32Array()
 			terrain.splatmap_texture_local = null
 	if backups.is_empty():
@@ -89,18 +100,23 @@ func save_with_externalized_terrains(edited_root: Node, restore_host: Object) ->
 	# so a queued callback can't hit a freed plugin (the user could
 	# disable the plugin or close the scene between pack and the deferred
 	# invocation).
-	if restore_host != null and is_instance_valid(restore_host) \
-			and restore_host.has_method("_terrain_restore_callback"):
+	if (
+		restore_host != null
+		and is_instance_valid(restore_host)
+		and restore_host.has_method("_terrain_restore_callback")
+	):
 		restore_host.call_deferred("_terrain_restore_callback", backups)
 	else:
 		_restore(backups)
 	return save_err
+
 
 func _collect_terrains(node: Node, out: Array) -> void:
 	if node is _TerrainNode:
 		out.append(node)
 	for child in node.get_children():
 		_collect_terrains(child, out)
+
 
 func _restore(backups: Array) -> void:
 	for entry in backups:
