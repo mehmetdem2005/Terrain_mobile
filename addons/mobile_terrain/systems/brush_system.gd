@@ -48,10 +48,22 @@ func is_in_brush(px: Vector2, center: Vector2, radius: float) -> bool:
 # Per-pixel brush strength multiplier (0..1).
 func falloff_at(px: Vector2, center: Vector2, radius: float) -> float:
 	if brush_mask != null and brush_mask_image != null:
-		var u: float = (px.x - center.x) / radius * 0.5 + 0.5
-		var v: float = (px.y - center.y) / radius * 0.5 + 0.5
+		# V23 GUARD (TKT-002 C4): a brush_mask Texture2D can be assigned
+		# while its CPU-side Image has zero dimensions — e.g. when
+		# Image.decompress() silently failed during _set_brush_mask, or
+		# when an importer hasn't finished yet. Without this guard,
+		# clampi(int(u * 0), 0, -1) produces undefined behaviour and the
+		# subsequent get_pixel() crashes the editor on the first brush dab.
 		var w: int = brush_mask_image.get_width()
 		var h: int = brush_mask_image.get_height()
+		if w <= 0 or h <= 0:
+			return 1.0
+		# Guard radius == 0 to avoid divide-by-zero when callers pass a
+		# degenerate brush (slider at minimum + clamped to zero somewhere).
+		if radius <= 0.0:
+			return 0.0
+		var u: float = (px.x - center.x) / radius * 0.5 + 0.5
+		var v: float = (px.y - center.y) / radius * 0.5 + 0.5
 		var ix: int = clampi(int(u * w), 0, w - 1)
 		var iy: int = clampi(int(v * h), 0, h - 1)
 		return brush_mask_image.get_pixel(ix, iy).r

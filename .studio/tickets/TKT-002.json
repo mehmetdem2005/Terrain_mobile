@@ -1,0 +1,36 @@
+{
+  "id": "TKT-002",
+  "title": "MobileTerrain3D — CRITICAL fixes + architecture plan + innovation/gap reports",
+  "kind": "fix_and_plan",
+  "size": "L",
+  "target_godot": "4.6.2",
+  "target_platform": "mobile",
+  "priority": "ship-blocker",
+  "linked_to": "TKT-001",
+  "phase_1_completed": [
+    "C1 — external_data_path scope validation (res:// or user:// only) + schema check on load",
+    "C2 — UI signal recursive disconnect helper, called from _exit_tree before queue_free",
+    "C4 — BrushSystem zero-dim mask guard + radius<=0 guard in falloff_at",
+    "C6 — Triplanar mobile gate (uniform bool mobile_quality, set via RenderingServer detection)",
+    "C7 — EditorInterface helpers _safe_editor_base_control/_safe_editor_main_screen with null guards"
+  ],
+  "audit_revisions": [
+    "C3 — false positive: raymarch_system.gd:27 already has 'if camera == null' guard. Audit miss.",
+    "C8 — false positive: ui_container is added via add_control_to_container at plugin.gd:501; matching remove at :1538 is correct. Audit miss."
+  ],
+  "deferred_to_TKT-003": [
+    "C5 — god-class decomposition (node.gd 2321, plugin.gd 2031). Architecture plan written; implementation phased."
+  ],
+  "new_specialist_roles_instantiated": [
+    "Innovation Specialist for Terrain Tooling",
+    "Module Gap Analyst"
+  ],
+  "state": "AWAITING_MERGE",
+  "created_at": "2026-05-21T22:15:00Z",
+  "artifacts": [
+    ".studio/tickets/TKT-002/fixes-applied.md",
+    ".studio/tickets/TKT-002/architecture-plan.md",
+    ".studio/tickets/TKT-002/innovation-recommendations.md",
+    ".studio/tickets/TKT-002/module-gaps.md"
+  ]
+}
