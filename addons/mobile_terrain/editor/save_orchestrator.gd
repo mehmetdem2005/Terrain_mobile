@@ -45,7 +45,7 @@ func save_with_externalized_terrains(edited_root: Node, restore_host: Object) ->
 	for terrain in terrains:
 		if not is_instance_valid(terrain):
 			continue
-		var threshold: int = _TerrainNode.AUTO_EXTERNALIZE_THRESHOLD
+		var threshold: int = TerrainConstants.AUTO_EXTERNALIZE_THRESHOLD
 		var size_qualifies: bool = terrain.height_data.size() >= threshold
 		var path_set: bool = terrain.external_data_path != ""
 		var res_missing: bool = path_set and not ResourceLoader.exists(terrain.external_data_path)

@@ -199,6 +199,22 @@ var splatmap_data: PackedByteArray
 # Stays null outside a paint stroke so ad-hoc/scripted calls into
 # `_paint_splatmap` still work via the fallback path in that function.
 var _splatmap_stroke_image: Image = null
+# V22 FIX (audit-chunk-resize-during-stroke + audit-paint-init-mid-stroke):
+# Stroke lifecycle bookkeeping. `_active_stroke` toggles in start/end so
+# destructive setters can defer. `_stroke_revision` increments per stroke
+# and is captured into `_splatmap_stroke_revision` when the paint cache
+# is taken; end_stroke compares them to detect a stale cache after a
+# splatmap rebuild that happened mid-stroke.
+var _active_stroke: bool = false
+var _stroke_revision: int = 0
+var _splatmap_stroke_revision: int = -1
+# Pending resize values queued by setters when called during a stroke
+# or during initialize_terrain. 0 means "no pending change".
+var _deferred_map_size: int = 0
+var _deferred_chunk_size: int = 0
+# Re-entry guard for initialize_terrain (set true on entry, false on exit).
+# Prevents setter cascade -> initialize_terrain -> setter cascade loops.
+var _rebuilding_terrain: bool = false
 
 # V20 FIX: Emitted whenever `_place_foliage_slope()` successfully adds an
 # instance to a MultiMesh. The editor plugin listens to this signal to
@@ -239,7 +255,7 @@ var noise_gen: FastNoiseLite
 # proposed but never wired to Node-class instances in any released
 # Godot 4 build, confirmed via engine source. _save_external_data on
 # EditorPlugin is the documented hook the engine actually calls.
-const AUTO_EXTERNALIZE_THRESHOLD := 262144  # 512 × 512
+# V22: threshold moved to TerrainConstants.AUTO_EXTERNALIZE_THRESHOLD.
 
 # V21: guard against the external_data_path setter cascading when WE
 # (internal code) assign it. Set true around internal assignments to
@@ -891,6 +907,13 @@ func _align_to_chunks(val: int) -> int:
 	return rounded
 
 func _set_map_size(val: int):
+	# V22 FIX (audit-chunk-resize-during-stroke + audit-chunk-map-size-mid-rebuild):
+	# defer destructive resize while a stroke is active or initialize_terrain
+	# is mid-loop. end_stroke / initialize_terrain replay the pending value
+	# once it's safe.
+	if _active_stroke or _rebuilding_terrain:
+		_deferred_map_size = val
+		return
 	# V20 FIX (#12): see _align_to_chunks. Without this, a non-divisible
 	# map_size would leave the modulo cells (e.g. cells 96-99 with
 	# map_size=100, chunk_size=32) outside any chunk — un-rendered and
@@ -957,6 +980,13 @@ func _set_map_size(val: int):
 var _suppress_chunk_size_setter: bool = false
 
 func _set_chunk_size(val: int):
+	# V22 FIX (audit-chunk-resize-during-stroke + audit-chunk-map-size-mid-rebuild):
+	# defer the destructive setter (which would cascade into
+	# initialize_terrain) until the active stroke / current rebuild ends.
+	# Internal writes use _suppress_chunk_size_setter which bypasses this.
+	if not _suppress_chunk_size_setter and (_active_stroke or _rebuilding_terrain):
+		_deferred_chunk_size = val
+		return
 	if _suppress_chunk_size_setter:
 		# Just record the new value; the caller is responsible for any
 		# downstream rebuild. Clamps below still apply so we never
@@ -1091,7 +1121,7 @@ func _import_exr(val: bool):
 	# effect of an import — surprising, and it'd fail silently if the
 	# scene isn't saved yet.
 	if total >= 512 * 512 and external_data_path == "":
-		push_warning("MT-W07: Büyük heightmap (%d cells, ~%.1f MB). Inspector'da 'Click To Externalize' ile .res dosyasına kaydet — .tscn küçük ve hızlı kalır." % [total, total * 4.0 / 1048576.0])
+		TerrainDiagnostics.warn(TerrainDiagnostics.W_LARGE_HEIGHTMAP, [total, total * 4.0 / 1048576.0])
 	# V21: auto-reset the checkbox so the next import requires another
 	# explicit click. Without this, the property stayed `true` in the
 	# Inspector, but a second click (true → true) didn't fire the setter
@@ -1120,7 +1150,7 @@ func _externalize_data(val: bool) -> void:
 	if not Engine.is_editor_hint():
 		# Runtime can't write resources (the project is exported, read-only).
 		# This is purely an editor-time migration helper.
-		push_warning("MT-W08: _externalize_data called outside editor; ignored.")
+		TerrainDiagnostics.warn(TerrainDiagnostics.W_EXTERNALIZE_RUNTIME)
 		call_deferred("_reset_externalize")
 		return
 	# Pick a path next to the current scene file by default. If we can't
@@ -1133,7 +1163,7 @@ func _externalize_data(val: bool) -> void:
 		if st != null and st.edited_scene_root != null:
 			scene_path = st.edited_scene_root.scene_file_path
 		if scene_path == "":
-			push_warning("MT-W09: Sahne henüz kaydedilmedi, externalize edilemiyor. Önce sahneyi kaydet.")
+			TerrainDiagnostics.warn(TerrainDiagnostics.W_SCENE_NOT_SAVED)
 			call_deferred("_reset_externalize")
 			return
 		# V21: sanitize node name for filesystem use. Node names can contain
@@ -1183,7 +1213,7 @@ func _externalize_data(val: bool) -> void:
 	
 	var err := ResourceSaver.save(data, target_path)
 	if err != OK:
-		push_warning("MT-002: ResourceSaver.save failed for '%s' (err=%d). Inline data will remain in scene." % [target_path, err])
+		TerrainDiagnostics.error(TerrainDiagnostics.E_SAVE_RESOURCE_FAILED, [target_path, err])
 		call_deferred("_reset_externalize")
 		return
 	# Suppress setter cascade — we're recording where we saved to, not
@@ -1318,9 +1348,14 @@ func _process(_delta: float):
 		# (>16) catches bulk-rebuild scenarios without hurting interactive
 		# response. The cap (64) keeps any single frame under ~10ms even
 		# on the slowest Mobile GPUs we target.
-		var budget: int = 4
-		if dirty_chunks.size() > 16:
-			budget = mini(64, dirty_chunks.size() / 8)
+		# V22 FIX (audit-chunk-budget): linear interpolation eliminates
+		# the old "stall zone" between 17..32 dirty chunks where budget
+		# stayed at 4 despite a growing queue. Now budget scales with
+		# queue depth from MIN to MAX as defined in TerrainConstants.
+		var budget: int = mini(
+			TerrainConstants.MAX_CHUNK_PER_FRAME,
+			max(TerrainConstants.MIN_CHUNK_PER_FRAME, dirty_chunks.size() / 4)
+		)
 		var process_count = 0
 		var keys_to_remove = []
 		for cpos in dirty_chunks.keys():
@@ -1332,6 +1367,17 @@ func _process(_delta: float):
 			dirty_chunks.erase(k)
 
 func initialize_terrain():
+	# V22 FIX (audit-chunk-map-size-mid-rebuild): re-entrancy guard. If a
+	# setter cascades back into us during chunk creation, the second call
+	# would clear the half-built `chunks` dict and corrupt the active
+	# loop. Treat the re-entry as "queued"; the outer call will replay
+	# the resize via _deferred_map_size on exit.
+	if _rebuilding_terrain:
+		return
+	_rebuilding_terrain = true
+	# V22: linear adaptive budget (audit-chunk-budget). Old formula had a
+	# [17..32] stall zone where budget stayed at 4 despite a growing queue.
+	# Drained here in initialize_terrain via the _process loop; see below.
 	var expected_size = map_size * map_size
 	if height_data.size() != expected_size:
 		# V20 FIX (notice #1): preserve existing terrain data through
@@ -1416,6 +1462,16 @@ func initialize_terrain():
 	for cz in range(num_chunks):
 		for cx in range(num_chunks):
 			_create_chunk(cx, cz, build_sync)
+	_rebuilding_terrain = false
+	# V22: replay any setter that deferred itself while we were rebuilding.
+	if _deferred_map_size != 0 and _deferred_map_size != map_size:
+		var pending: int = _deferred_map_size
+		_deferred_map_size = 0
+		map_size = pending
+	if _deferred_chunk_size != 0 and _deferred_chunk_size != chunk_size:
+		var pending: int = _deferred_chunk_size
+		_deferred_chunk_size = 0
+		chunk_size = pending
 
 func _create_chunk(cx: int, cz: int, build_now: bool = true):
 	var chunk = MeshInstance3D.new()
@@ -1811,40 +1867,42 @@ func get_intersection_raymarch_persistent(camera: Camera3D, screen_pos: Vector2)
 	# unit-tested without spinning up the whole terrain node.
 	return TerrainRaymarchSystem.intersect(camera, screen_pos, height_data, map_size, global_position)
 
-func start_stroke(): 
+func start_stroke():
 	last_sculpt_pos = Vector3.INF
 	# V20 FIX (notice #2): also reset the object-placement gate.
-	# `last_placement_pos` was persisting between strokes — a user who
-	# placed an object at the end of one stroke and then started a new
-	# stroke nearby (within the 3.0-unit spacing check) would get no
-	# object placed on the new click, with no indication why. Each
-	# fresh stroke should make its own independent placement decision.
 	last_placement_pos = Vector3.INF
-	# V20 FIX (#14): cache splatmap image once per paint stroke so the
-	# brush doesn't allocate a fresh 256KB copy on every dab. The cache
-	# is dropped in end_stroke (or left untouched for non-paint strokes).
+	# V22 FIX (audit-chunk-resize-during-stroke): mark active so map_size
+	# / chunk_size setters can defer their destructive rebuild until the
+	# stroke ends. Bumped on every start so consecutive strokes see a new
+	# revision and stale caches detect themselves.
+	_active_stroke = true
+	_stroke_revision += 1
 	if current_tool == 7 and splatmap_texture_local != null:
 		_splatmap_stroke_image = splatmap_texture_local.get_image()
-		# Defensive: ensure the shader's uniform points at the texture
-		# we're about to mutate. Cheap, and protects against the rare
-		# case where the material's uniform got cleared between strokes.
+		_splatmap_stroke_revision = _stroke_revision
 		if terrain_material and terrain_material is ShaderMaterial:
 			terrain_material.set_shader_parameter("splatmap", splatmap_texture_local)
-	
-func end_stroke(): 
+
+func end_stroke():
 	last_sculpt_pos = Vector3.INF
-	# V20 FIX (#14): release the cached image and write back to the byte
-	# array. During the stroke we kept splatmap_data stale on purpose
-	# (avoiding per-dab `img.get_data()` allocations); this is where we
-	# bring it back in sync before the plugin reads it for undo.
-	#
-	# V21: defensive duplicate. get_data() returns a shared reference in
-	# some Godot 4 builds; once we null _splatmap_stroke_image the engine
-	# can GC the Image, but if anything else still holds a ref and mutates
-	# it, splatmap_data would silently corrupt. Cheap insurance.
-	if _splatmap_stroke_image != null:
+	# V22 FIX (audit-paint-init-mid-stroke): if the splatmap was rebuilt
+	# during this stroke (revision bumped or current_tool changed), the
+	# cached _splatmap_stroke_image points at the now-orphaned old texture.
+	# Skip the sync rather than overwriting splatmap_data with stale bytes.
+	if _splatmap_stroke_image != null and _splatmap_stroke_revision == _stroke_revision:
 		splatmap_data = _splatmap_stroke_image.get_data().duplicate()
-		_splatmap_stroke_image = null
+	_splatmap_stroke_image = null
+	_active_stroke = false
+	# V22: if a map_size/chunk_size setter deferred itself during the
+	# stroke, replay it now that the stroke is closed.
+	if _deferred_map_size != 0 and _deferred_map_size != map_size:
+		var pending: int = _deferred_map_size
+		_deferred_map_size = 0
+		map_size = pending
+	if _deferred_chunk_size != 0 and _deferred_chunk_size != chunk_size:
+		var pending: int = _deferred_chunk_size
+		_deferred_chunk_size = 0
+		chunk_size = pending
 
 func apply_brush_stroke_slope(hit_point: Vector3, hit_normal: Vector3):
 	if current_tool == 8: # Object — V21: scatter mode
@@ -1980,7 +2038,7 @@ func _paint_splatmap(cx: float, cz: float, radius: float, strength: float):
 	# V22: explicit zero-based range guard; warns on slot 5+ instead of
 	# silently doing nothing (RGBA8 splatmap only has 4 channels).
 	if not (0 <= current_paint_slot and current_paint_slot < 4):
-		push_warning("MT-005: paint slot %d out of range [0..3]; ignoring." % current_paint_slot)
+		TerrainDiagnostics.warn(TerrainDiagnostics.E_PAINT_SLOT_OOB, [current_paint_slot])
 		return
 	# V20 FIX (#14): use the stroke-cached image when available; otherwise
 	# fall back to a fresh `get_image()` so scripted/ad-hoc paint calls
@@ -2258,6 +2316,12 @@ func _smooth_height(cx: float, cz: float, radius: float, strength: float):
 	height_data = temp_heights
 				
 func _noise_height(cx: float, cz: float, radius: float, strength: float):
+	# V22 FIX (audit-brush-noise-determinism): switched from randf_range to
+	# noise_gen.get_noise_2d so the same (x, z) always produces the same
+	# offset. randf_range was global-RNG seeded, which made undo→redo replay
+	# generate DIFFERENT random offsets — the redo state diverged from
+	# what the user had just undone. Spatial noise stays deterministic
+	# across replays.
 	var min_x = max(0, int(cx-radius))
 	var max_x = min(map_size, int(cx+radius)+1)
 	var min_z = max(0, int(cz-radius))
@@ -2267,7 +2331,9 @@ func _noise_height(cx: float, cz: float, radius: float, strength: float):
 			var px = Vector2(x, z)
 			if _is_in_brush(px, Vector2(cx, cz), radius):
 				var f = brush_shape_falloff(px, Vector2(cx, cz), radius)
-				height_data[z * map_size + x] += randf_range(-strength, strength) * f * 0.2
+				# get_noise_2d returns roughly [-1, 1]; scale to [-strength, strength].
+				var n: float = noise_gen.get_noise_2d(float(x), float(z))
+				height_data[z * map_size + x] += n * strength * f * 0.2
 				_mark_chunk_dirty(x, z)
 				
 func _terrace_height(cx: float, cz: float, radius: float, strength: float):

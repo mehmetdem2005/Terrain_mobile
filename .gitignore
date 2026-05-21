@@ -7,7 +7,10 @@
 test/fixtures/*/.godot/
 test/fixtures/*/test_terrain_*.tscn
 test/fixtures/*/test_terrain*.res
+test/fixtures/*/test_multi_terrain*.tscn
+test/fixtures/*/multi_*.res
 test/fixtures/*/integration_tests
+test/fixtures/*/unit_tests
 test/fixtures/*/addons/mobile_terrain
 
 # OS junk

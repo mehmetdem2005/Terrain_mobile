@@ -908,8 +908,13 @@ func _refresh_manager_ui():
 	# Manage button right after selecting a freshly-loaded scene), so
 	# we re-pad defensively here. Idempotent: no-op if already sized.
 	_sync_pbr_array_sizes()
-	
-	for i in range(selected_node.terrain_textures.size()):
+
+	# V22 FIX (audit-editor-asset-manager-rebuild): snapshot slot count
+	# at loop start so a concurrent setter (eg. _on_albedo_changed firing
+	# during slot row build) can't shrink the array under our feet and
+	# leave a row referencing a dead slot index.
+	var slot_count: int = selected_node.terrain_textures.size()
+	for i in range(slot_count):
 		# Each texture slot is a panel with 4 pickers (albedo, normal,
 		# roughness, AO) plus header buttons (auto-detect, delete).
 		var slot_panel := PanelContainer.new()
@@ -1054,7 +1059,7 @@ func _add_texture_slot():
 	# place to lift.
 	const MAX_PAINT_SLOTS := 4
 	if selected_node.terrain_textures.size() >= MAX_PAINT_SLOTS:
-		push_warning("MT-W03: En fazla %d doku slot'u olabilir (splatmap RGBA, 4 kanal). Önce bir slot'u boşalt ve değiştir." % MAX_PAINT_SLOTS)
+		TerrainDiagnostics.warn(TerrainDiagnostics.W_TEXTURE_SLOT_CAP, [MAX_PAINT_SLOTS])
 		return
 	selected_node.terrain_textures.append(null)
 	# V21: keep PBR arrays in lockstep with the albedo array.
@@ -1211,11 +1216,11 @@ func _auto_detect_maps(slot_idx: int) -> void:
 	if slot_idx >= selected_node.terrain_textures.size(): return
 	var albedo: Texture2D = selected_node.terrain_textures[slot_idx]
 	if albedo == null:
-		push_warning("MT-W04: Slot %d: önce Albedo texture'ını seç, sonra Tespit'e bas." % slot_idx)
+		TerrainDiagnostics.warn(TerrainDiagnostics.W_DETECT_NEED_ALBEDO, [slot_idx])
 		return
 	var albedo_path := albedo.resource_path
 	if albedo_path.is_empty():
-		push_warning("MT-W05: Slot %d: Albedo texture'ın disk yolu yok (built-in resource olabilir), otomatik tespit atlandı." % slot_idx)
+		TerrainDiagnostics.warn(TerrainDiagnostics.W_DETECT_NO_PATH, [slot_idx])
 		return
 	
 	var detected := _detect_sibling_maps(albedo_path)
@@ -1244,7 +1249,7 @@ func _auto_detect_maps(slot_idx: int) -> void:
 		filled.append("Emission: " + (detected["emission"] as Texture2D).resource_path)
 	
 	if filled.is_empty():
-		push_warning("MT-W06: Slot %d: '%s' için kardeş map bulunamadı. Albedo'nun '_diff' / '_albedo' / '_color' marker içerdiğinden emin ol." % [slot_idx, albedo_path.get_file()])
+		TerrainDiagnostics.warn(TerrainDiagnostics.W_DETECT_NO_SIBLINGS, [slot_idx, albedo_path.get_file()])
 		return
 	selected_node.update_shader_textures()
 	_refresh_manager_ui()
