@@ -2226,19 +2226,10 @@ func _place_foliage_slope(pos: Vector3, normal: Vector3):
 	var mm = mmi.multimesh
 	var count = mm.instance_count
 	mm.instance_count = count + 1
-	var tf = Transform3D()
-	var up = normal
-	var right = Vector3.UP.cross(up).normalized()
-	if right.length_squared() < 0.0001: 
-		right = Vector3.RIGHT.cross(up).normalized()
-	var forward = right.cross(up).normalized()
-	tf.basis = Basis(right, up, forward)
-	tf = tf.rotated_local(Vector3.UP, randf_range(0, PI * 2))
-	var s = randf_range(0.8, 1.2)
-	tf = tf.scaled_local(Vector3(s, s, s))
-	tf.origin = pos
+	# TKT-003 Phase A.3: orientation math extracted into FoliageSystem.
+	var tf: Transform3D = FoliageSystem.compute_orientation_transform(pos, normal)
 	mm.set_instance_transform(count, tf)
-	
+
 	# V20 FIX: notify any listening editor plugin so it can record this
 	# placement in the undo history. Done last, after the placement has
 	# fully succeeded, so listeners only ever see valid state.
@@ -2312,17 +2303,8 @@ func _scatter_foliage(centre: Vector3, normal: Vector3):
 	mm.instance_count = base_count + accepted_positions.size()
 	for i in range(accepted_positions.size()):
 		var pos: Vector3 = accepted_positions[i]
-		var tf := Transform3D()
-		var up: Vector3 = normal
-		var right: Vector3 = Vector3.UP.cross(up).normalized()
-		if right.length_squared() < 0.0001:
-			right = Vector3.RIGHT.cross(up).normalized()
-		var forward: Vector3 = right.cross(up).normalized()
-		tf.basis = Basis(right, up, forward)
-		tf = tf.rotated_local(Vector3.UP, randf_range(0, TAU))
-		var s: float = randf_range(0.8, 1.2)
-		tf = tf.scaled_local(Vector3(s, s, s))
-		tf.origin = pos
+		# TKT-003 Phase A.3: orientation math extracted into FoliageSystem.
+		var tf: Transform3D = FoliageSystem.compute_orientation_transform(pos, normal)
 		var instance_idx: int = base_count + i
 		mm.set_instance_transform(instance_idx, tf)
 		foliage_placed.emit(mmi, instance_idx, tf)
