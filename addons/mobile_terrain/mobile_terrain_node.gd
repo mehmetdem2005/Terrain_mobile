@@ -1319,6 +1319,19 @@ func _externalize_data(val: bool) -> void:
 			data.splatmap_bytes = img.get_data().duplicate()
 			data.splatmap_size = img.get_width()
 
+	# TKT-005 M3: validate the WRITE target the same way C1 validates the
+	# read path. external_data_path can be typed straight into the
+	# inspector, so target_path (which defaults to it) could be
+	# "/etc/x.res" or "res://../../x.res" — without this guard ResourceSaver
+	# would happily write outside the project. C1 closed the read/RCE side;
+	# this closes the symmetric write side.
+	if not _is_safe_external_path(target_path):
+		TerrainDiagnostics.warn(
+			"MT-W15: Refusing to externalize to unsafe path '%s' (must be under res:// or user://, no traversal)." % target_path
+		)
+		call_deferred("_reset_externalize")
+		return
+
 	var err := ResourceSaver.save(data, target_path)
 	if err != OK:
 		TerrainDiagnostics.error(TerrainDiagnostics.E_SAVE_RESOURCE_FAILED, [target_path, err])
