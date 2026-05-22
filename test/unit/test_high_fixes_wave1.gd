@@ -21,6 +21,7 @@ func _init() -> void:
 	_run("h8_paint_slot_clamps_low", _test_slot_clamp_low, failures)
 	_run("h8_paint_slot_valid_unchanged", _test_slot_valid, failures)
 	_run("h12_restore_interface_contract", _test_restore_interface, failures)
+	_run("h4_process_drains_dirty_queue", _test_process_drains, failures)
 
 	if failures.is_empty():
 		print("HIGH_WAVE1_TEST_OK")
@@ -154,4 +155,21 @@ func _test_restore_interface() -> String:
 		return "terrain must expose force_update_all() for undo restore"
 	if not has_refresh:
 		return "terrain must expose force_refresh_splatmap() for undo restore"
+	return ""
+
+
+# H4: _process drains the dirty-chunk queue under the count+time budget.
+# Can't measure the wall-clock cap headlessly, but this locks the loop
+# mechanism: a small dirty set (< MIN_CHUNK_PER_FRAME) must fully drain in
+# one tick. (chunks dict is empty so update_chunk_mesh is a no-op, which
+# isolates the queue-drain logic from actual meshing.)
+func _test_process_drains() -> String:
+	var node: Node3D = TerrainNode.new()
+	node.dirty_chunks[Vector2i(0, 0)] = true
+	node.dirty_chunks[Vector2i(1, 0)] = true
+	node._process(0.0)
+	var remaining: int = node.dirty_chunks.size()
+	node.free()
+	if remaining != 0:
+		return "_process should drain a 2-chunk dirty set in one tick, %d left" % remaining
 	return ""
