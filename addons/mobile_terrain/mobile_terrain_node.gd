@@ -295,7 +295,9 @@ var noise_gen: FastNoiseLite
 # proposed but never wired to Node-class instances in any released
 # Godot 4 build, confirmed via engine source. _save_external_data on
 # EditorPlugin is the documented hook the engine actually calls.
-# V22: threshold moved to TerrainConstants.AUTO_EXTERNALIZE_THRESHOLD.
+# TKT-007: externalisation is size-independent now (no threshold) — see
+# TerrainSaveOrchestrator._should_externalize. Any non-empty terrain's data
+# moves to a .res so nothing is baked inline into the .tscn.
 
 # V21: guard against the external_data_path setter cascading when WE
 # (internal code) assign it. Set true around internal assignments to
