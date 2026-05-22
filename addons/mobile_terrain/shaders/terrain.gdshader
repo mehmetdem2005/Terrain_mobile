@@ -101,9 +101,26 @@ vec3 _mt_triplanar(sampler2D s, vec3 wpos) {
 
 vec3 _mt_albedo_sample(sampler2D s, vec3 wpos) {
 	vec3 xz = _mt_sample_var(s, wpos.xz * tex_scale);
-	// V23 (TKT-002 C6): bypass triplanar on mobile_quality. Saves up to
-	// 18 texture reads/fragment with 4 active slots, keeps the plugin
-	// runnable on Forward Mobile without breaking desktop visuals.
+	// TKT-006: triplanar now runs on mobile too. The old `mobile_quality ||`
+	// bypass (TKT-002 C6) made the triplanar_blend slider do NOTHING on the
+	// Forward Mobile renderer, so slopes kept stretching no matter what the
+	// user set — the reported "eğimde kayma". Triplanar adds texture READS
+	// (fill-rate), not sampler UNITS, and is already gated by triplanar_blend
+	// (0 = no extra reads), so albedo — where the stretch is most visible —
+	// can afford it on mobile. Normal maps stay single-projection on mobile
+	// via _mt_normal_sample below to keep the per-fragment read count in
+	// check (C6's legitimate fill-rate concern).
+	if (triplanar_blend < 0.001) return xz;
+	vec3 tri = _mt_triplanar(s, wpos);
+	return mix(xz, tri, triplanar_blend);
+}
+
+// Like _mt_albedo_sample but keeps single (XZ) projection on mobile_quality.
+// Slope stretching on a normal map is far less perceptible than on albedo,
+// so skipping triplanar here halves the mobile triplanar read count while
+// the visible albedo fix is preserved. Desktop gets full triplanar on both.
+vec3 _mt_normal_sample(sampler2D s, vec3 wpos) {
+	vec3 xz = _mt_sample_var(s, wpos.xz * tex_scale);
 	if (mobile_quality || triplanar_blend < 0.001) return xz;
 	vec3 tri = _mt_triplanar(s, wpos);
 	return mix(xz, tri, triplanar_blend);
@@ -131,10 +148,10 @@ void fragment() {
 	vec3 c3 = _mt_albedo_sample(tex_a_3, v_world_pos);
 	ALBEDO = c0 * blend.r + c1 * blend.g + c2 * blend.b + c3 * blend.a;
 
-	vec3 n0 = _mt_albedo_sample(tex_n_0, v_world_pos);
-	vec3 n1 = _mt_albedo_sample(tex_n_1, v_world_pos);
-	vec3 n2 = _mt_albedo_sample(tex_n_2, v_world_pos);
-	vec3 n3 = _mt_albedo_sample(tex_n_3, v_world_pos);
+	vec3 n0 = _mt_normal_sample(tex_n_0, v_world_pos);
+	vec3 n1 = _mt_normal_sample(tex_n_1, v_world_pos);
+	vec3 n2 = _mt_normal_sample(tex_n_2, v_world_pos);
+	vec3 n3 = _mt_normal_sample(tex_n_3, v_world_pos);
 	NORMAL_MAP = n0 * blend.r + n1 * blend.g + n2 * blend.b + n3 * blend.a;
 	NORMAL_MAP_DEPTH = normal_strength;
 
