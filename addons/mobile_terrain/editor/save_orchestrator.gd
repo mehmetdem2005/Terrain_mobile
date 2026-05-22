@@ -32,6 +32,21 @@ const _TerrainNode := preload("res://addons/mobile_terrain/mobile_terrain_node.g
 # `restore_host`: any Node that's alive long enough to invoke the
 # deferred _restore_after_save callback (usually the EditorPlugin
 # itself).
+# TKT-007: decide whether a terrain's heavy data should move to a .res
+# companion. The rule is now size-independent: ANY terrain with data gets
+# externalised, so terrain data is NEVER baked inline into the .tscn
+# regardless of the map_size the user picks. (The old AUTO_EXTERNALIZE_
+# THRESHOLD only externalised >=256² terrains, leaving smaller ones embedded
+# — producing the large-text-scene the user hit.) A small terrain's .res is
+# cheap; the inline cost (slow text parse, git churn, the large-resource
+# warning) is what we avoid. Only re-externalise an already-external terrain
+# when its .res went missing.
+static func _should_externalize(height_size: int, path_set: bool, res_missing: bool) -> bool:
+	if height_size <= 0:
+		return false
+	return not path_set or res_missing
+
+
 func save_with_externalized_terrains(edited_root: Node, restore_host: Object) -> int:
 	if edited_root == null:
 		return ERR_INVALID_PARAMETER
@@ -46,11 +61,9 @@ func save_with_externalized_terrains(edited_root: Node, restore_host: Object) ->
 	for terrain in terrains:
 		if not is_instance_valid(terrain):
 			continue
-		var threshold: int = TerrainConstants.AUTO_EXTERNALIZE_THRESHOLD
-		var size_qualifies: bool = terrain.height_data.size() >= threshold
 		var path_set: bool = terrain.external_data_path != ""
 		var res_missing: bool = path_set and not ResourceLoader.exists(terrain.external_data_path)
-		if size_qualifies and (not path_set or res_missing):
+		if _should_externalize(terrain.height_data.size(), path_set, res_missing):
 			if res_missing:
 				terrain._suppress_external_path_setter = true
 				terrain.external_data_path = ""

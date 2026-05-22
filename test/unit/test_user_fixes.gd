@@ -10,14 +10,13 @@ extends SceneTree
 #      keeping STORAGE so old scenes still deserialize.
 
 const TerrainNode := preload("res://addons/mobile_terrain/mobile_terrain_node.gd")
-const Consts := preload("res://addons/mobile_terrain/core/terrain_constants.gd")
-
-const DEFAULT_MAP_SIZE := 256
+const Orch := preload("res://addons/mobile_terrain/editor/save_orchestrator.gd")
 
 
 func _init() -> void:
 	var failures: Array[String] = []
-	_run("externalize_threshold_covers_default_map", _test_threshold, failures)
+	_run("externalize_is_size_independent", _test_externalize_any_size, failures)
+	_run("map_size_adapts_to_any_value", _test_map_size_adapts, failures)
 	_run("slope_rock_factor_hidden_from_inspector", _test_slope_hidden, failures)
 	_run("slope_rock_factor_keeps_storage", _test_slope_storage, failures)
 	_run("active_pbr_props_stay_visible", _test_pbr_visible, failures)
@@ -42,15 +41,46 @@ func _run(name: String, fn: Callable, failures: Array[String]) -> void:
 		print("OK  %s" % name)
 
 
-func _test_threshold() -> String:
-	# Default terrain is DEFAULT_MAP_SIZE² cells. If the threshold is above
-	# that, the default terrain never auto-externalises and bakes inline.
-	var default_cells := DEFAULT_MAP_SIZE * DEFAULT_MAP_SIZE
-	if Consts.AUTO_EXTERNALIZE_THRESHOLD > default_cells:
-		return (
-			"threshold %d must be <= default map cells %d, else default terrain embeds in .tscn"
-			% [Consts.AUTO_EXTERNALIZE_THRESHOLD, default_cells]
-		)
+func _test_map_size_adapts() -> String:
+	# "Whatever map_size I pick, the plugin must adapt." A value that isn't a
+	# multiple of chunk_size would otherwise leave orphan modulo cells
+	# (un-rendered, un-paintable). The setter aligns it to a clean
+	# chunk-divisible value so the chunk grid always tiles. (Headless: the
+	# setter still aligns map_size even though it skips the editor-only
+	# rebuild branch.)
+	var node: Node3D = TerrainNode.new()
+	var cs: int = node.chunk_size
+	node.map_size = cs * 4 + 7  # deliberately not a multiple of chunk_size
+	var ms: int = node.map_size
+	node.free()
+	if ms <= 0:
+		return "map_size must stay positive after adapt, got %d" % ms
+	if cs > 0 and ms % cs != 0:
+		return "map_size %d must adapt to a multiple of chunk_size %d (no orphan cells)" % [ms, cs]
+	return ""
+
+
+func _test_externalize_any_size() -> String:
+	# TKT-007: externalisation must be size-INDEPENDENT so terrain data is
+	# never embedded in the .tscn whatever map_size the user picks.
+	# Tiny terrain, no external path yet → must externalise.
+	if not Orch._should_externalize(16, false, false):
+		return "tiny terrain (16 cells / 4²) must externalise"
+	# Default 256² → must externalise.
+	if not Orch._should_externalize(65536, false, false):
+		return "256² terrain must externalise"
+	# Large 1024² → must externalise.
+	if not Orch._should_externalize(1048576, false, false):
+		return "1024² terrain must externalise"
+	# Empty terrain → nothing to write.
+	if Orch._should_externalize(0, false, false):
+		return "empty terrain must not externalise"
+	# Already external with a present .res → don't rewrite every save.
+	if Orch._should_externalize(65536, true, false):
+		return "already-external terrain must not re-externalise"
+	# Already external but .res went missing → must re-externalise.
+	if not Orch._should_externalize(65536, true, true):
+		return "external terrain with a missing .res must re-externalise"
 	return ""
 
 
