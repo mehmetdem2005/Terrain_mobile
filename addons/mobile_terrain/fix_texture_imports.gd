@@ -96,6 +96,21 @@ const NORMAL_MAP_MARKERS := [
 ]
 
 
+# TKT-004 H11: confine the recursive scan and the .import writes to the
+# project tree. Rejects non-res:// paths and explicit parent-dir traversal.
+# NOTE: string-level scope guard only — GDScript exposes no realpath /
+# canonicalize, so a symlink that physically points outside the project
+# while still presenting a res:// path can't be fully detected here. This
+# does stop a non-res:// entry point and any "/../" traversal, which is
+# what bounds the recursion and the FileAccess.WRITE in _process_import_file.
+static func _is_within_res(path: String) -> bool:
+	if not path.begins_with("res://"):
+		return false
+	if "/../" in path or path.ends_with("/..") or path.begins_with("../"):
+		return false
+	return true
+
+
 func _run() -> void:
 	print("")
 	print("==================================================")
@@ -253,6 +268,10 @@ func _setup_project_defaults(stats: Dictionary) -> void:
 
 
 func _scan_dir(dir_path: String, stats: Dictionary) -> void:
+	# TKT-004 H11: never recurse outside the project tree.
+	if not _is_within_res(dir_path):
+		stats["errors"].append("Kapsam dışı atlandı: " + dir_path)
+		return
 	# Godot'un internal directory'lerini atla
 	if dir_path.contains("/.godot/") or dir_path.ends_with("/.godot"):
 		return
@@ -281,6 +300,10 @@ func _scan_dir(dir_path: String, stats: Dictionary) -> void:
 
 
 func _process_import_file(import_path: String, stats: Dictionary) -> void:
+	# TKT-004 H11: refuse to read or rewrite .import files outside the project.
+	if not _is_within_res(import_path):
+		stats["errors"].append("Kapsam dışı yazma reddedildi: " + import_path)
+		return
 	stats["scanned"] += 1
 
 	var f := FileAccess.open(import_path, FileAccess.READ)

@@ -14,6 +14,9 @@ extends SceneTree
 # must update this test alongside it.
 
 const TerrainNodeScript := preload("res://addons/mobile_terrain/mobile_terrain_node.gd")
+# TKT-004 H11: fix_texture_imports confines its recursive scan + .import
+# writes to res:// only (no user://, unlike the data-load path above).
+const FixTextureScript := preload("res://addons/mobile_terrain/fix_texture_imports.gd")
 
 func _init() -> void:
 	var failures: Array[String] = []
@@ -27,6 +30,11 @@ func _init() -> void:
 	_run("parent_traversal_rejected", _test_parent_traversal, failures)
 	_run("trailing_parent_rejected", _test_trailing_parent, failures)
 	_run("http_url_rejected", _test_http_url, failures)
+	# H11 — fix_texture_imports scope guard
+	_run("h11_res_import_accepted", _test_h11_res_accepted, failures)
+	_run("h11_user_rejected", _test_h11_user_rejected, failures)
+	_run("h11_absolute_rejected", _test_h11_absolute_rejected, failures)
+	_run("h11_traversal_rejected", _test_h11_traversal_rejected, failures)
 
 	if failures.is_empty():
 		print("PATH_SAFETY_TEST_OK")
@@ -102,4 +110,31 @@ func _test_http_url() -> String:
 		return "https:// URL must be rejected"
 	if TerrainNodeScript._is_safe_external_path("file:///etc/passwd"):
 		return "file:// URL must be rejected"
+	return ""
+
+func _test_h11_res_accepted() -> String:
+	if not FixTextureScript._is_within_res("res://"):
+		return "res:// root must be accepted"
+	if not FixTextureScript._is_within_res("res://addons/mobile_terrain/x.png.import"):
+		return "nested res:// .import must be accepted"
+	return ""
+
+func _test_h11_user_rejected() -> String:
+	# Unlike the data-load path, the import fixer must stay inside res://.
+	if FixTextureScript._is_within_res("user://saves/x.import"):
+		return "user:// must be rejected by the import scope guard"
+	return ""
+
+func _test_h11_absolute_rejected() -> String:
+	if FixTextureScript._is_within_res("/etc/passwd"):
+		return "absolute /etc must be rejected"
+	if FixTextureScript._is_within_res("/tmp/evil.import"):
+		return "absolute /tmp must be rejected"
+	return ""
+
+func _test_h11_traversal_rejected() -> String:
+	if FixTextureScript._is_within_res("res://../../etc/passwd"):
+		return "res:// with /../ must be rejected"
+	if FixTextureScript._is_within_res("res://data/.."):
+		return "trailing /.. must be rejected"
 	return ""
