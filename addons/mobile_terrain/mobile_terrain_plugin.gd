@@ -1742,6 +1742,12 @@ func _exit_tree() -> void:
 	if is_instance_valid(brush_cursor):
 		_detach_brush_cursor()
 		brush_cursor.queue_free()
+		# TKT-005 M10: null the reference after queue_free. queue_free is
+		# deferred, so is_instance_valid() still reports true for the rest
+		# of this frame — null'ing makes the "recreate if invalid" guard in
+		# _attach_brush_cursor_to fire correctly instead of handing back a
+		# pending-free node on a fast disable->re-enable.
+		brush_cursor = null
 	if asset_manager_panel:
 		_disconnect_all_signals_recursive(asset_manager_panel)
 		asset_manager_panel.queue_free()
