@@ -122,15 +122,20 @@ func _restore(backups: Array) -> void:
 	for entry in backups:
 		if not entry.has("node"):
 			continue
-		var terrain = entry["node"]
-		if not is_instance_valid(terrain):
+		var node = entry["node"]
+		if not is_instance_valid(node):
 			TerrainDiagnostics.warn(TerrainDiagnostics.W_RESTORE_INVALID)
 			continue
+		# TKT-004 H12 (fallback path): the deferred plugin callback was made
+		# typed; mirror it here so the synchronous _restore fallback also
+		# uses a typed cast + direct calls instead of has_method() string
+		# dispatch, which silently no-op'd on a rename.
+		if not (node is _TerrainNode):
+			continue
+		var terrain := node as _TerrainNode
 		if entry.has("height_data"):
 			terrain.height_data = entry["height_data"]
 		if entry.has("splatmap_texture_local"):
 			terrain.splatmap_texture_local = entry["splatmap_texture_local"]
-		if terrain.has_method("force_update_all"):
-			terrain.force_update_all()
-		if terrain.has_method("force_refresh_splatmap"):
-			terrain.force_refresh_splatmap()
+		terrain.force_update_all()
+		terrain.force_refresh_splatmap()
