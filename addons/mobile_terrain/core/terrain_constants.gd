@@ -13,6 +13,12 @@ const SYNC_REBUILD_CHUNK_LIMIT := 256  # force_update_all switch point
 const MAX_CHUNK_COUNT := 1024  # auto-bump chunk_size trigger
 const MAX_CHUNK_PER_FRAME := 64  # adaptive _process budget upper bound
 const MIN_CHUNK_PER_FRAME := 4  # adaptive _process budget lower bound
+# TKT-004 H4: wall-clock cap on the per-frame chunk rebuild loop. A chunk's
+# mesh cost scales with chunk_size, so a fixed chunk COUNT can still blow
+# the frame budget on large maps (a 256-wide chunk meshes far slower than a
+# 32-wide one). 8000µs (~8ms) keeps the rebuild under half a 60fps frame
+# even when MAX_CHUNK_PER_FRAME chunks would individually be too slow.
+const MAX_CHUNK_REBUILD_USEC := 8000
 
 # Storage thresholds.
 const AUTO_EXTERNALIZE_THRESHOLD := 262144  # 512² cells → recommend externalisation

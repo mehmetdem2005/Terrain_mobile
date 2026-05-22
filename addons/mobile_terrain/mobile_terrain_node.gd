@@ -1545,11 +1545,19 @@ func _process(_delta: float):
 		)
 		var process_count = 0
 		var keys_to_remove = []
+		# TKT-004 H4: time-bound the loop in addition to the count budget.
+		# The count cap assumes a roughly fixed per-chunk cost, but meshing
+		# a 256-wide chunk is far slower than a 32-wide one, so on large
+		# maps `budget` chunks can overrun the frame. Stop once we've spent
+		# ~8ms this frame; the remaining dirty chunks drain next frame.
+		var start_usec := Time.get_ticks_usec()
 		for cpos in dirty_chunks.keys():
 			update_chunk_mesh(cpos.x, cpos.y)
 			keys_to_remove.append(cpos)
 			process_count += 1
 			if process_count >= budget:
+				break
+			if Time.get_ticks_usec() - start_usec > TerrainConstants.MAX_CHUNK_REBUILD_USEC:
 				break
 		for k in keys_to_remove:
 			dirty_chunks.erase(k)
