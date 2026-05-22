@@ -21,6 +21,7 @@ func _init() -> void:
 	_run("max_height_scales_output", _test_max_height_scaling, failures)
 	_run("resizes_to_target_size", _test_resize, failures)
 	_run("output_size_is_target_squared", _test_output_size, failures)
+	_run("h6_source_not_mutated_on_fast_path", _test_h6_source_safety, failures)
 
 	if failures.is_empty():
 		print("HEIGHTMAP_IO_TEST_OK")
@@ -123,4 +124,23 @@ func _test_output_size() -> String:
 		var expected: int = target * target
 		if result.size() != expected:
 			return "target_size=%d: expected %d, got %d" % [target, expected, result.size()]
+	return ""
+
+func _test_h6_source_safety() -> String:
+	# TKT-004 H6: on the no-mutation fast path (source already target-size,
+	# RGBA8, uncompressed) the duplicate is skipped and we read the shared
+	# image directly. That read MUST NOT corrupt the source — a regression
+	# that mutates in place (decompress/resize/convert without duplicating)
+	# would change the bytes here. _make_red_texture produces exactly that
+	# fast-path shape (RGBA8, square), so target == source size hits it.
+	var tex := _make_red_texture(8, 200)
+	var before: PackedByteArray = tex.get_image().get_data()
+	var result: PackedFloat32Array = HeightmapIOScript.convert_texture_to_heights(tex, 8, 10.0)
+	var after: PackedByteArray = tex.get_image().get_data()
+	if before != after:
+		return "source image must not be mutated on the no-duplicate fast path"
+	# And the result must still be correct (red=200 -> 200/255 * 10).
+	var expected: float = 200.0 / 255.0 * 10.0
+	if absf(result[0] - expected) > 0.05:
+		return "fast-path heights wrong: expected ~%f, got %f" % [expected, result[0]]
 	return ""

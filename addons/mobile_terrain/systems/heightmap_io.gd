@@ -37,17 +37,37 @@ static func convert_texture_to_heights(
 	var src_img := src_texture.get_image()
 	if src_img == null:
 		return PackedFloat32Array()
-	# V20 FIX (bug E1): duplicate to avoid mutating the source texture's
-	# shared internal Image (ImageTexture returns a shared reference).
-	var img: Image = src_img.duplicate()
-	if img.is_compressed():
-		img.decompress()
-	img.resize(target_size, target_size, Image.INTERPOLATE_BILINEAR)
-	# V21 PERFORMANCE FIX: bulk byte read instead of per-pixel get_pixel.
-	# Converting to RGBA8 lets us index the raw byte array directly:
-	# pixel i's red component lives at byte (i * 4).
-	if img.get_format() != Image.FORMAT_RGBA8:
-		img.convert(Image.FORMAT_RGBA8)
+	# TKT-004 H6: only duplicate when we're actually going to MUTATE the
+	# image (decompress / resize / convert). The audit flagged ~3 full
+	# buffers + GC churn on a 1254² import; the dominant one is this
+	# duplicate (E1's source-protection copy, source-sized before resize).
+	# get_data() below is read-only, so when the source is already the
+	# target size, uncompressed, and RGBA8 we can read it directly and skip
+	# the copy entirely — eliminating the largest allocation in the common
+	# "import at native resolution" path. (The audit's 256²-streaming idea
+	# isn't expressible with Godot's Image API: resize() and get_data()
+	# both operate on the whole buffer, so there's no per-tile scratch.)
+	var needs_mutation: bool = (
+		src_img.is_compressed()
+		or src_img.get_width() != target_size
+		or src_img.get_height() != target_size
+		or src_img.get_format() != Image.FORMAT_RGBA8
+	)
+	var img: Image = src_img
+	if needs_mutation:
+		# V20 FIX (bug E1): duplicate so the source texture's shared internal
+		# Image (ImageTexture returns a shared reference) isn't corrupted by
+		# the in-place decompress/resize/convert chain.
+		img = src_img.duplicate()
+		if img.is_compressed():
+			img.decompress()
+		if img.get_width() != target_size or img.get_height() != target_size:
+			img.resize(target_size, target_size, Image.INTERPOLATE_BILINEAR)
+		# V21 PERFORMANCE FIX: bulk byte read instead of per-pixel get_pixel.
+		# Converting to RGBA8 lets us index the raw byte array directly:
+		# pixel i's red component lives at byte (i * 4).
+		if img.get_format() != Image.FORMAT_RGBA8:
+			img.convert(Image.FORMAT_RGBA8)
 	var raw: PackedByteArray = img.get_data()
 	var total: int = target_size * target_size
 	# Defensive: the buffer must hold at least 4 bytes per cell. If
