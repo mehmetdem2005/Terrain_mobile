@@ -75,6 +75,11 @@ var _brush_mask_cache: Array = []
 var undo_redo: EditorUndoRedoManager
 var heightmap_backup: PackedFloat32Array
 var splatmap_backup: PackedByteArray
+# TKT-004 H7: the UI subtree is built lazily (see _ensure_ui_built) on first
+# edit/visibility instead of in _enter_tree, so opening a project that
+# contains no terrain doesn't pay the ~700ms construction cost. This flag
+# guards against double-building and tells teardown/hide whether UI exists.
+var _ui_built := false
 
 # V20 FIX: Per-stroke object placement bookkeeping.
 #
@@ -104,8 +109,9 @@ func _enter_tree() -> void:
 	undo_redo = get_undo_redo()
 	add_custom_type("MobileTerrain3D", "Node3D", TerrainNode, null)
 
-	_build_main_ui()
-	_build_asset_manager_ui()
+	# TKT-004 H7: UI build deferred to first _make_visible(true) / _edit via
+	# _ensure_ui_built(), so plugin load doesn't construct ~17 controls +
+	# per-slot picker grids when the user isn't editing a terrain yet.
 
 	# V20 FIX: Brush cursor lifecycle.
 	#
@@ -323,6 +329,19 @@ func _disconnect_placement_signal(node) -> void:
 # textures for the old Decal-based cursor. The new mesh cursor doesn't
 # use textures (geometry encodes the shape), so this function had no
 # callers. ~40 lines of dead pixel-loop code removed.
+
+
+# TKT-004 H7: idempotent lazy UI builder. Called from _make_visible(true)
+# and _edit() so the UI subtree exists before anything reads it, but the
+# actual construction happens only once. _exit_tree is already null-safe
+# (it guards every queue_free with `if ui_container:` etc.), so a plugin
+# enable->disable cycle with no editing never builds or frees the UI.
+func _ensure_ui_built() -> void:
+	if _ui_built:
+		return
+	_ui_built = true
+	_build_main_ui()
+	_build_asset_manager_ui()
 
 
 func _build_main_ui():
@@ -1836,6 +1855,9 @@ func _terrain_restore_callback(backups: Array) -> void:
 
 
 func _edit(object: Object) -> void:
+	# TKT-004 H7: the UI is built lazily; ensure it exists before the
+	# _update_*() calls below (and the dropdown sync) read its controls.
+	_ensure_ui_built()
 	# V21: finalise any in-progress stroke under the OLD node BEFORE we
 	# reassign selected_node. Without this, if the user clicked a
 	# different terrain in the Scene dock while still holding the mouse
@@ -1913,6 +1935,7 @@ func _edit(object: Object) -> void:
 
 func _make_visible(visible: bool) -> void:
 	if visible:
+		_ensure_ui_built()  # TKT-004 H7: build on first show
 		ui_container.show()
 		# Only show if attached. An unparented cursor isn't in any World3D
 		# so showing it would be a no-op anyway — but being explicit avoids
@@ -1921,7 +1944,10 @@ func _make_visible(visible: bool) -> void:
 			brush_cursor.show()
 		_update_brush_visual_properties()
 	else:
-		ui_container.hide()
+		# TKT-004 H7: UI may never have been built (plugin shown=false
+		# before any edit), so guard the hide.
+		if ui_container:
+			ui_container.hide()
 		# V21: clean up an in-progress stroke before we lose the node
 		# reference. Without this, switching scene tabs or deselecting
 		# the terrain mid-stroke left _splatmap_stroke_image populated
@@ -2025,6 +2051,18 @@ func _finalize_active_stroke() -> void:
 		# reads `placement_records` outside the stroke lifecycle.
 		placement_records.clear()
 		placement_initial_counts.clear()
+
+	# TKT-004 H2/H3: belt-and-braces — guarantee NO heightmap/splatmap
+	# backup survives a stroke finalisation, not just the active tool's.
+	# The if/elif above only clears the committed tool's backup. A backup
+	# left over from a previous tool (H2: switch sculpt->paint mid-session)
+	# or a previous terrain (H3: select a different terrain mid-stroke)
+	# would otherwise persist and make the NEXT stroke's undo rewind the
+	# wrong tool/terrain's state. Idempotent in the normal case — the
+	# active branch already emptied its own backup, so this just re-empties
+	# the other (already-empty) one.
+	splatmap_backup = PackedByteArray()
+	heightmap_backup = PackedFloat32Array()
 
 
 # V21: small helper to mirror selected_node.current_tool back into the
