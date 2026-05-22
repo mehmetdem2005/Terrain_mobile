@@ -21,6 +21,8 @@ func _init() -> void:
 	_run("slope_rock_factor_hidden_from_inspector", _test_slope_hidden, failures)
 	_run("slope_rock_factor_keeps_storage", _test_slope_storage, failures)
 	_run("active_pbr_props_stay_visible", _test_pbr_visible, failures)
+	_run("albedo_triplanar_runs_on_mobile", _test_albedo_triplanar_mobile, failures)
+	_run("normal_sample_kept_single_proj", _test_normal_sample_exists, failures)
 
 	if failures.is_empty():
 		print("USER_FIXES_TEST_OK")
@@ -89,4 +91,48 @@ func _test_pbr_visible() -> String:
 	node.free()
 	if not ok:
 		return "active PBR controls must stay visible in the inspector"
+	return ""
+
+
+const SHADER_PATH := "res://addons/mobile_terrain/shaders/terrain.gdshader"
+
+
+func _albedo_sample_body() -> String:
+	var code := FileAccess.get_file_as_string(SHADER_PATH)
+	if code.is_empty():
+		return ""
+	var start := code.find("vec3 _mt_albedo_sample")
+	if start < 0:
+		return ""
+	var brace := code.find("{", start)
+	var close := code.find("}", brace)
+	if brace < 0 or close < 0:
+		return ""
+	return code.substr(brace, close - brace)
+
+
+func _test_albedo_triplanar_mobile() -> String:
+	# The bug was `if (mobile_quality || triplanar_blend < 0.001) return xz;`
+	# in _mt_albedo_sample — that fully bypassed triplanar on Forward Mobile,
+	# so the slider did nothing and slopes kept stretching. Albedo must NOT
+	# gate triplanar on mobile_quality. (Normal maps may; see next test.)
+	var body := _albedo_sample_body()
+	if body == "":
+		return "could not isolate _mt_albedo_sample in terrain.gdshader"
+	# Match the actual gate STATEMENT, not the word in an explanatory comment
+	# (the fix's comment legitimately mentions the old `mobile_quality ||`).
+	if "if (mobile_quality" in body:
+		return "albedo triplanar must not gate on mobile_quality (re-introduces eğimde kayma)"
+	return ""
+
+
+func _test_normal_sample_exists() -> String:
+	# Normals keep single-projection on mobile to bound the read count, so a
+	# dedicated _mt_normal_sample (which DOES check mobile_quality) must exist
+	# and be distinct from the albedo path.
+	var code := FileAccess.get_file_as_string(SHADER_PATH)
+	if code.is_empty():
+		return "could not read terrain.gdshader"
+	if not ("_mt_normal_sample" in code):
+		return "_mt_normal_sample must exist (mobile keeps normal maps single-projection)"
 	return ""
