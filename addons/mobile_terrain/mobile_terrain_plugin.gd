@@ -107,7 +107,15 @@ func _get_plugin_name() -> String:
 
 func _enter_tree() -> void:
 	undo_redo = get_undo_redo()
-	add_custom_type("MobileTerrain3D", "Node3D", TerrainNode, null)
+	# TKT-005 L5: give MobileTerrain3D a Scene-dock icon (was null → generic
+	# Node3D icon). load() + exists() guard rather than preload() so a
+	# headless parse-check (which doesn't run the .svg import) never fails
+	# on a missing imported texture; null falls back to the generic icon.
+	var node_icon: Texture2D = null
+	const ICON_PATH := "res://addons/mobile_terrain/icon.svg"
+	if ResourceLoader.exists(ICON_PATH):
+		node_icon = load(ICON_PATH)
+	add_custom_type("MobileTerrain3D", "Node3D", TerrainNode, node_icon)
 
 	# TKT-004 H7: UI build deferred to first _make_visible(true) / _edit via
 	# _ensure_ui_built(), so plugin load doesn't construct ~17 controls +
