@@ -71,7 +71,7 @@ extends Node3D
 @export var terrain_emission: Array[Texture2D] = []
 @export var asset_meshes: Array[Mesh] = []
 
-@export_category("Gelişmiş PBR/Eğim Settings")
+@export_category("Gelişmiş PBR Settings")
 @export var texture_scale: float = 1.0:
 	set = _set_tex_scale
 # V21: New PBR controls. These multiply onto the shader output, so they
@@ -371,6 +371,13 @@ func _validate_property(property: Dictionary) -> void:
 		else:
 			# External mode: editor sees them (for debugging) but save() skips.
 			property.usage = PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_SCRIPT_VARIABLE
+	elif property.name == "slope_rock_factor":
+		# TKT-006: dead V19/V20 property — the V21 PBR shader ignores it (rock
+		# is painted via the splatmap now, see _set_slope_rock). Keep STORAGE
+		# so old scenes still deserialize it without error, but drop EDITOR so
+		# it stops showing a non-functional "Eğim" control that the user can
+		# drag with no effect.
+		property.usage = PROPERTY_USAGE_STORAGE
 
 
 func _ready() -> void:

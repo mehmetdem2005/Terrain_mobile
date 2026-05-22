@@ -21,7 +21,14 @@ const MIN_CHUNK_PER_FRAME := 4  # adaptive _process budget lower bound
 const MAX_CHUNK_REBUILD_USEC := 8000
 
 # Storage thresholds.
-const AUTO_EXTERNALIZE_THRESHOLD := 262144  # 512² cells → recommend externalisation
+# TKT-006: lowered 262144 (512²) -> 65536 (256²). map_size DEFAULTS to 256,
+# so the old 512² threshold meant the default terrain (256² = 65536 cells,
+# ~256KB heights + ~256KB splatmap) never auto-externalised and got baked
+# inline into the .tscn as base64 — producing the multi-MiB "large text
+# resource" scenes users were hitting on a plain save. At 256² the default
+# terrain now externalises to a .res companion on first save; only small
+# prototype terrains (<256²) stay inline, where the cost is negligible.
+const AUTO_EXTERNALIZE_THRESHOLD := 65536  # 256² cells → auto-externalise
 
 # Stroke throttling intervals (seconds between applied dabs).
 const MIN_STATIONARY_INTERVAL := 0.04  # ~25 Hz cap for sculpt/paint
