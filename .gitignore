@@ -11,6 +11,7 @@ test/fixtures/*/test_multi_terrain*.tscn
 test/fixtures/*/multi_*.res
 test/fixtures/*/integration_tests
 test/fixtures/*/unit_tests
+test/fixtures/*/visual_tests
 test/fixtures/*/addons/mobile_terrain
 
 # OS junk
