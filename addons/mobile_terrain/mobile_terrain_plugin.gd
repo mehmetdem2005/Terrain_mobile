@@ -2103,100 +2103,10 @@ func _update_ui_visibility():
 
 
 func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
-	if not selected_node:
-		return EditorPlugin.AFTER_GUI_INPUT_PASS
-	# V21: cache camera + mouse position from every event (BEFORE the
-	# brush_enabled gate below) so brush-toggle-on can re-raycast without
-	# going through EditorInterface (whose API changed between Godot 4.x
-	# versions and risked parse-time failures). We capture even when
-	# brush is disabled — the user might be orbiting with brush off,
-	# toggling back on should pick up wherever the camera ended up.
-	_cached_camera = camera
-	if event is InputEventMouse:
-		_cached_mouse_pos = (event as InputEventMouse).position
-	# V21: master toggle gate. Returning PASS lets the editor's own
-	# camera controller see the event, so zoom/pan/orbit work normally.
-	# Any input that would normally start a stroke or place an object
-	# is dropped. We deliberately don't hide the cursor here — the
-	# toggle handler did that — and don't process MouseMotion either,
-	# because we don't want the cursor to flicker around when the user
-	# is just orbiting.
-	if not brush_enabled:
-		return EditorPlugin.AFTER_GUI_INPUT_PASS
-
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		# V22 FIX: raycast BEFORE start_stroke(). A miss used to open a
-		# stroke (allocating a paint-cache image) and then return without
-		# ever closing it — leaving the cache pointing at the now-stale
-		# splatmap image. Subsequent strokes on a different tool would
-		# write through the stale reference and corrupt splatmap_data.
-		# Now we only commit to a stroke once the cursor actually hits
-		# the terrain.
-		var result = selected_node.get_intersection_raymarch_persistent(camera, event.position)
-		if typeof(result) != TYPE_DICTIONARY or result.pos == Vector3.INF:
-			# Click landed off the terrain. Do nothing.
-			return EditorPlugin.AFTER_GUI_INPUT_PASS
-
-		is_sculpting = true
-		# Clear placement records on every stroke start (non-object strokes
-		# included) so leftover state from a previously interrupted object
-		# stroke can't leak into the new one.
-		placement_records.clear()
-		placement_initial_counts.clear()
-		# Backup buffers are filled lazily by _ensure_backup_for_current_tool
-		# on the first dab that actually modifies the terrain. Clicks on
-		# empty space therefore cost zero memory and skip recording an
-		# empty undo entry.
-		splatmap_backup = PackedByteArray()
-		heightmap_backup = PackedFloat32Array()
-
-		selected_node.start_stroke()
-		_conform_decal_to_surface(result.pos)
-		_ensure_backup_for_current_tool()
-		selected_node.apply_brush_stroke_slope(result.pos, result.normal)
-		return EditorPlugin.AFTER_GUI_INPUT_STOP
-
-	elif (
-		event is InputEventMouseButton
-		and not event.pressed
-		and event.button_index == MOUSE_BUTTON_LEFT
-	):
-		# V21: route through the shared finaliser so all stroke-end paths
-		# (mouse-up, brush-toggle-off, tool-change, visibility-loss)
-		# behave identically. The finaliser also clears the backup arrays
-		# — a bug the old mouse-up branch had silently: the splatmap/
-		# heightmap backups stayed non-empty after commit, so the NEXT
-		# stroke saw `backup.size() > 0` in _ensure_backup_for_current_tool,
-		# skipped snapshotting, and undo would roll back to the PREVIOUS
-		# stroke's state. Touch-screen users with rapid tap sequences would
-		# see undo "skip" interactively.
-		is_sculpting = false
-		_finalize_active_stroke()
-		return EditorPlugin.AFTER_GUI_INPUT_STOP
-
-	elif event is InputEventMouseMotion:
-		var res = selected_node.get_intersection_raymarch_persistent(camera, event.position)
-		if typeof(res) == TYPE_DICTIONARY and res.pos != Vector3.INF:
-			_conform_decal_to_surface(res.pos)
-			if is_sculpting:
-				# V20 FIX (#15): snapshot lazily for drags that started off
-				# the terrain and only landed on it later in the stroke.
-				_ensure_backup_for_current_tool()
-				selected_node.apply_brush_stroke_slope(res.pos, res.normal)
-		else:
-			# V21: cursor leaves the terrain (mouse over sky/UI). Hide it
-			# AND invalidate _last_brush_hit. Without the reset, a
-			# subsequent slider drag would call _conform_brush_to_surface
-			# with the STALE last-known hit and the cursor would
-			# resurrect itself at a random earlier location — the
-			# "ghost cursor reappearing" symptom.
-			if is_instance_valid(brush_cursor):
-				brush_cursor.hide()
-			_last_brush_hit = Vector3.INF
-		if is_sculpting:
-			return EditorPlugin.AFTER_GUI_INPUT_STOP
-
-	return EditorPlugin.AFTER_GUI_INPUT_PASS
+	# Phase B: routing extracted to editor/input_router.gd. The router reads
+	# and drives this plugin's stroke state (selected_node, is_sculpting,
+	# backups) and calls the shared helpers, so it's passed `self`.
+	return TerrainInputRouter.route(self, camera, event)
 
 
 # V19 PRO: Conforming Decal replaces rotation math. Just position it and it projects perfectly!
