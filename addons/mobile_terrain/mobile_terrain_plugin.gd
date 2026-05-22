@@ -1815,17 +1815,24 @@ func _terrain_restore_callback(backups: Array) -> void:
 	for entry in backups:
 		if not entry.has("node"):
 			continue
-		var terrain = entry["node"]
-		if not is_instance_valid(terrain):
+		var node = entry["node"]
+		if not is_instance_valid(node):
 			continue
+		# TKT-004 H12: cast to TerrainNode and call the restore hooks
+		# directly. The old has_method("force_update_all") string dispatch
+		# silently no-op'd if either method were renamed — a diagnostic
+		# regression where undo/redo would quietly stop refreshing the
+		# mesh. A typed call makes a rename a hard parse error instead, and
+		# the `is` check keeps it safe for any non-terrain node in backups.
+		if not (node is TerrainNode):
+			continue
+		var terrain := node as TerrainNode
 		if entry.has("height_data"):
 			terrain.height_data = entry["height_data"]
 		if entry.has("splatmap_texture_local"):
 			terrain.splatmap_texture_local = entry["splatmap_texture_local"]
-		if terrain.has_method("force_update_all"):
-			terrain.force_update_all()
-		if terrain.has_method("force_refresh_splatmap"):
-			terrain.force_refresh_splatmap()
+		terrain.force_update_all()
+		terrain.force_refresh_splatmap()
 
 
 func _edit(object: Object) -> void:

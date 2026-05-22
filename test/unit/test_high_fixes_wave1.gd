@@ -20,6 +20,7 @@ func _init() -> void:
 	_run("h8_paint_slot_clamps_high", _test_slot_clamp_high, failures)
 	_run("h8_paint_slot_clamps_low", _test_slot_clamp_low, failures)
 	_run("h8_paint_slot_valid_unchanged", _test_slot_valid, failures)
+	_run("h12_restore_interface_contract", _test_restore_interface, failures)
 
 	if failures.is_empty():
 		print("HIGH_WAVE1_TEST_OK")
@@ -137,4 +138,20 @@ func _test_slot_valid() -> String:
 	node.free()
 	if v != 2:
 		return "paint_slot=2 should stay 2, got %d" % v
+	return ""
+
+
+# H12: the undo/redo restore callback casts to TerrainNode and calls these
+# two methods directly. Lock their existence so a rename fails loudly (this
+# test + a parse error from the typed call) instead of silently skipping
+# the post-restore mesh/splatmap refresh — the original diagnostic bug.
+func _test_restore_interface() -> String:
+	var node: Node3D = TerrainNode.new()
+	var has_update: bool = node.has_method("force_update_all")
+	var has_refresh: bool = node.has_method("force_refresh_splatmap")
+	node.free()
+	if not has_update:
+		return "terrain must expose force_update_all() for undo restore"
+	if not has_refresh:
+		return "terrain must expose force_refresh_splatmap() for undo restore"
 	return ""
