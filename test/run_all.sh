@@ -63,13 +63,17 @@ echo "==> 10/12 foliage system unit test (TKT-003 Phase A.3 extraction)"
 godot --headless --script unit_tests/test_foliage_system.gd 2>&1 | tee /tmp/foliage_system.log
 grep -q "^FOLIAGE_SYSTEM_TEST_OK" /tmp/foliage_system.log
 
-echo "==> 11/12 chunk renderer unit test (TKT-003 Phase A.4 extraction)"
+echo "==> 11/13 chunk renderer unit test (TKT-003 Phase A.4 extraction)"
 godot --headless --script unit_tests/test_chunk_renderer.gd 2>&1 | tee /tmp/chunk_renderer.log
 grep -q "^CHUNK_RENDERER_TEST_OK" /tmp/chunk_renderer.log
 
-echo "==> 12/12 HIGH fixes wave 1 (TKT-004 H5 brush LUT + H8 paint-slot clamp)"
+echo "==> 12/13 HIGH fixes wave 1 (TKT-004 H5 brush LUT + H8 paint-slot clamp)"
 godot --headless --script unit_tests/test_high_fixes_wave1.gd 2>&1 | tee /tmp/high_wave1.log
 grep -q "^HIGH_WAVE1_TEST_OK" /tmp/high_wave1.log
+
+echo "==> 13/13 user-reported fixes (TKT-006 scene-embed threshold + dead slope setting)"
+godot --headless --script unit_tests/test_user_fixes.gd 2>&1 | tee /tmp/user_fixes.log
+grep -q "^USER_FIXES_TEST_OK" /tmp/user_fixes.log
 
 echo
 echo "ALL TESTS PASSED"
