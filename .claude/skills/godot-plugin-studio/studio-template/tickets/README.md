@@ -14,6 +14,29 @@ Postmortem tickets prefixed: TKT-PM-001.
 OPEN → TRIAGED → IN_PROGRESS ↔ BLOCKED → QUALITY_GATE → HONESTY_AUDIT → SIGN_OFF → CLOSED
 ```
 
+## v2.2 audit-trail artifacts (Intelligence Layer)
+
+Every L/XL ticket produces these files in its audit trail:
+
+| File | Created at | Owner | Gate |
+|------|-----------|-------|------|
+| `relevant-lessons.md` | Phase 1.B start | Tech Director | L43 |
+| `risk-register.md` | Phase 1.B close | Risk Officer | L45 |
+| `ticket-fingerprint.md` | Phase 1.C close | Defect Pattern Specialist | L50 |
+| `predictive-checklist.md` | Phase 1.C → 1.D | Defect Pattern Specialist + Tech Director | L51 |
+| `lessons.md` | Phase 1.G close | Studio Knowledge Curator | L41 |
+| `predictive-vs-actual.md` | Phase 1.G | Bug Hunter Lead + Defect Pattern Specialist | L53 |
+| `repeat-mistake-postmortem.md` | Only if repeat triggered | Postmortem Lead | L44 |
+| `rollback-decision.md` | Only if rollback request filed | Rollback Officer | L56 |
+
+Templates in this directory: `_lessons-template.md`, `_relevant-lessons-template.md`, `_risk-register-template.md`, `_ticket-fingerprint-template.md`, `_predictive-checklist-template.md`, `_rollback-decision-template.md`. Copy and rename per ticket.
+
+The risk register is reopened at Phase 1.G for reconciliation (Gate L48). The predictive checklist is verified at Phase 1.G via predictive-vs-actual (Gate L53).
+
+## Checkpoints (v2.2)
+
+Every phase boundary auto-creates a checkpoint under `.studio/checkpoints/TKT-NNN-phase-1.X/`. Owner: Audit Trail Officer. These enable rollback per `references/rollback-strategy-protocol.md`. Checkpointing is mandatory — Gate L54 requires checkpoints exist for every completed phase boundary.
+
 Tickets are not deleted on close. The full audit trail is preserved for postmortems and future learning.
 
 ## Schema
