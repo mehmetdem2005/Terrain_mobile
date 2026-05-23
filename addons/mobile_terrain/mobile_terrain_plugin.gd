@@ -1557,10 +1557,10 @@ func _update_dropdowns():
 		# wrong row. _index_for_id returns -1 when the ID no longer
 		# exists, in which case we fall back to index 0 and sync the
 		# node back to that ID.
-		var stored_id: int = clampi(
-			selected_node.current_paint_slot, 0, max(0, texture_opt.item_count - 1)
-		)
-		var idx_for_id: int = _index_for_id(texture_opt, stored_id)
+		# Look the slot ID up directly; a stale/out-of-range ID returns -1 and
+		# falls back to index 0 below. (IDs are not indices — don't clamp an ID
+		# against item_count.)
+		var idx_for_id: int = _index_for_id(texture_opt, selected_node.current_paint_slot)
 		if idx_for_id < 0:
 			idx_for_id = 0
 		texture_opt.select(idx_for_id)
@@ -1574,10 +1574,7 @@ func _update_dropdowns():
 		var name = mesh.resource_path.get_file() if mesh else "Boş Obje"
 		object_opt.add_item("Obje %d: %s" % [i, name], i)
 	if object_opt.item_count > 0:
-		var stored_id: int = clampi(
-			selected_node.current_object_slot, 0, max(0, object_opt.item_count - 1)
-		)
-		var idx_for_id: int = _index_for_id(object_opt, stored_id)
+		var idx_for_id: int = _index_for_id(object_opt, selected_node.current_object_slot)
 		if idx_for_id < 0:
 			idx_for_id = 0
 		object_opt.select(idx_for_id)
@@ -1828,7 +1825,7 @@ func _edit(object: Object) -> void:
 	_disconnect_placement_signal(selected_node)
 
 	selected_node = object
-	if selected_node:
+	if selected_node and is_instance_valid(selected_node):
 		# V20 FIX: Attach the brush cursor to the terrain so it lives in
 		# the same World3D and actually renders.
 		_attach_brush_cursor_to(selected_node)

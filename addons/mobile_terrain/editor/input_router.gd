@@ -50,9 +50,7 @@ static func route(p, camera: Camera3D, event: InputEvent) -> int:
 
 static func _is_left_press(event: InputEvent) -> bool:
 	return (
-		event is InputEventMouseButton
-		and event.pressed
-		and event.button_index == MOUSE_BUTTON_LEFT
+		event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT
 	)
 
 
@@ -96,7 +94,13 @@ static func _on_left_release(p) -> int:
 	# V21: route through the shared finaliser so all stroke-end paths
 	# (mouse-up, brush-toggle-off, tool-change, visibility-loss) behave
 	# identically and the backup arrays get cleared (TKT-004 H2/H3).
+	var was_active: bool = p.is_sculpting
 	p.is_sculpting = false
+	if not was_active:
+		# The press never opened a stroke (e.g. it missed the terrain, or the
+		# stroke was already finalised by a tool/visibility change). Pass the
+		# release to the editor's camera/gizmo controller instead of eating it.
+		return EditorPlugin.AFTER_GUI_INPUT_PASS
 	p._finalize_active_stroke()
 	return EditorPlugin.AFTER_GUI_INPUT_STOP
 

@@ -23,13 +23,45 @@ static func intersect(
 	screen_pos: Vector2,
 	height_data: PackedFloat32Array,
 	map_size: int,
-	terrain_origin: Vector3
+	terrain_xform: Transform3D
 ) -> Dictionary:
 	if camera == null or map_size <= 0 or height_data.size() < map_size * map_size:
 		return {"pos": Vector3.INF, "normal": Vector3.UP}
 	var from := camera.project_ray_origin(screen_pos)
 	var dir := camera.project_ray_normal(screen_pos)
-	return intersect_ray(from, dir, height_data, map_size, terrain_origin)
+	return intersect_ray_world(from, dir, height_data, map_size, terrain_xform)
+
+
+# Transform-aware world-ray pick. Converts the world ray into the terrain's
+# LOCAL space (where the height grid is axis-aligned, 1 unit = 1 cell), marches
+# there, then maps the hit + normal back to world. This keeps picking correct
+# when the MobileTerrain3D node is rotated/scaled — the render shader uses the
+# full MODEL_MATRIX, so the hit-test must too. With identity rotation/scale it
+# reduces exactly to the old translation-only path (inv * v == v - origin), so
+# the common (untransformed) case is unchanged.
+static func intersect_ray_world(
+	from: Vector3,
+	dir: Vector3,
+	height_data: PackedFloat32Array,
+	map_size: int,
+	terrain_xform: Transform3D
+) -> Dictionary:
+	if map_size <= 0 or height_data.size() < map_size * map_size:
+		return {"pos": Vector3.INF, "normal": Vector3.UP}
+	var inv := terrain_xform.affine_inverse()
+	var local_from: Vector3 = inv * from
+	var local_dir: Vector3 = inv.basis * dir
+	if local_dir.length_squared() < 0.000000000001:
+		return {"pos": Vector3.INF, "normal": Vector3.UP}
+	local_dir = local_dir.normalized()
+	var res := intersect_ray(local_from, local_dir, height_data, map_size, Vector3.ZERO)
+	if res.pos == Vector3.INF:
+		return res
+	var world_pos: Vector3 = terrain_xform * res.pos
+	var world_normal: Vector3 = terrain_xform.basis * res.normal
+	if world_normal.length_squared() < 0.000000000001:
+		world_normal = Vector3.UP
+	return {"pos": world_pos, "normal": world_normal.normalized()}
 
 
 # Raw-ray variant for unit tests + scripted use. Same algorithm as
@@ -69,7 +101,9 @@ static func intersect_ray(
 	var start_lz := floori(from.z - terrain_origin.z)
 	if start_lx >= 0 and start_lx < map_size and start_lz >= 0 and start_lz < map_size:
 		var start_h := height_data[start_lz * map_size + start_lx] + terrain_origin.y
-		was_above = from.y > start_h
+		# >= (not >) so a ray starting EXACTLY on the surface still counts as
+		# "above" and registers the downward crossing instead of missing.
+		was_above = from.y >= start_h
 	for i in range(max_iters):
 		var lx := floori(march_pos.x - terrain_origin.x)
 		var lz := floori(march_pos.z - terrain_origin.z)
