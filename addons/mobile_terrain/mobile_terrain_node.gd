@@ -1120,7 +1120,11 @@ func _set_material(val: Material):
 
 func _set_tex_scale(val: float):
 	texture_scale = val
-	update_shader_textures()
+	# Set only the one shader param (like the other PBR setters) instead of
+	# rebinding all ~21 params: dragging the panel slider was triggering a full
+	# update_shader_textures() every value-changed tick.
+	if terrain_material is ShaderMaterial:
+		terrain_material.set_shader_parameter("tex_scale", val)
 
 
 func bake_collision():

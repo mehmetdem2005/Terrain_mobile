@@ -21,6 +21,11 @@ extends RefCounted
 ## registry Dictionary is keyed by the Mesh resource itself — robust for
 ## path-less meshes and free of the old "::sub_resource" path fragility.
 
+# Safety cap on instances per mesh: a runaway drag (tiny spacing, fast motion)
+# must not grow the MultiMesh buffer without bound and exhaust memory / overload
+# the GPU (a cause of the editor crash on heavy object painting).
+const MAX_INSTANCES_PER_MESH := 8192
+
 
 # Human-readable Scene-dock name fragment for a mesh. Tolerates path-less
 # meshes (inspector primitives) by falling back to resource_name, then the
@@ -85,12 +90,17 @@ static func build_instance_transform(
 	object_scale: float,
 	align_to_normal: bool,
 	random_yaw: bool,
-	mmi_global_xform: Transform3D
+	mmi_global_xform: Transform3D,
+	mesh_min_y: float = 0.0
 ) -> Transform3D:
 	var basis := _orientation_basis(surface_normal, align_to_normal, random_yaw)
 	var s: float = object_scale if object_scale > 0.0 else 1.0
 	basis = basis.scaled(Vector3(s, s, s))
-	var world_tf := Transform3D(basis, world_pos)
+	# Sit the mesh ON the surface: shift the origin up by the mesh's bottom (its
+	# AABB min-y) along the instance up-axis, so a centre-pivot mesh (sphere/box)
+	# doesn't sink half below the terrain ("altına giriyor").
+	var origin: Vector3 = world_pos + basis * Vector3(0.0, -mesh_min_y, 0.0)
+	var world_tf := Transform3D(basis, origin)
 	return mmi_global_xform.affine_inverse() * world_tf
 
 
@@ -107,10 +117,19 @@ static func place_one(
 ) -> int:
 	if mmi == null or mmi.multimesh == null:
 		return -1
-	var local_tf := build_instance_transform(
-		world_pos, surface_normal, object_scale, align_to_normal, random_yaw, mmi.global_transform
-	)
 	var mm := mmi.multimesh
+	if mm.instance_count >= MAX_INSTANCES_PER_MESH:
+		return -1
+	var mesh_min_y: float = mm.mesh.get_aabb().position.y if mm.mesh != null else 0.0
+	var local_tf := build_instance_transform(
+		world_pos,
+		surface_normal,
+		object_scale,
+		align_to_normal,
+		random_yaw,
+		mmi.global_transform,
+		mesh_min_y
+	)
 	var idx: int = mm.instance_count
 	mm.instance_count = idx + 1
 	mm.set_instance_transform(idx, local_tf)
