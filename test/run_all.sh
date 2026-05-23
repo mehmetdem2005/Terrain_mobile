@@ -63,6 +63,10 @@ echo "==> object placer unit test (transform + spacing logic)"
 godot --headless --script unit_tests/test_object_placer.gd 2>&1 | tee /tmp/object_placer.log
 grep -q "^OBJECT_PLACER_TEST_OK" /tmp/object_placer.log
 
+echo "==> input router unit test (touch + mouse stroke routing)"
+godot --headless --script unit_tests/test_input_router.gd 2>&1 | tee /tmp/input_router.log
+grep -q "^INPUT_ROUTER_TEST_OK" /tmp/input_router.log
+
 echo "==> object .res roundtrip (path-less mesh persistence)"
 godot --headless --script integration_tests/object_roundtrip.gd 2>&1 | tee /tmp/object_roundtrip.log
 grep -q "^OBJECT_ROUNDTRIP_OK" /tmp/object_roundtrip.log

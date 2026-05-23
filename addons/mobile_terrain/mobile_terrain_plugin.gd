@@ -54,6 +54,10 @@ var brush_mask_picker_btn: Button
 # viewport without accidentally sculpting. Default true so the addon
 # stays drop-in for existing users.
 var brush_enabled: bool = true
+# True while a single-finger touch stroke is in progress. Used by
+# TerrainInputRouter to drop the emulated-from-touch mouse events so a tap
+# doesn't get handled twice (once as touch, once as emulated mouse).
+var _touch_active: bool = false
 # V21: re-save guard. Godot's _save_external_data hook fires AFTER the
 # .tscn has already been written, not before — so the textbook approach
 # (wipe data, return, let the save happen with empty arrays) doesn't
