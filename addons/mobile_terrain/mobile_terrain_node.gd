@@ -168,23 +168,21 @@ func _set_brush_strength(val: float) -> void:
 	brush_strength = clampf(val, 0.1, 2.0)
 
 
-# V21: object scatter controls. The pre-V21 "place one instance per
-# brush dab" behaviour was unworkable in practice:
-#   - tap = one instance (boring)
-#   - drag-with-spacing 3.0 hard-coded = either too sparse (small brush)
-#     or too clumped (big brush)
-#   - hold-still = zero placements (distance never crossed 3.0)
-# The new scatter system:
-#   - one dab places `object_density` instances at random points inside
-#     the brush radius
-#   - each candidate point is rejected if it's within `object_min_spacing`
-#     of an already-placed instance from this same stroke (so a single
-#     dab doesn't pile on the same spot, but you can still over-paint
-#     by moving the brush)
-#   - rate limit on the calling side still throttles to 25Hz so even a
-#     held-still tap saturates organically instead of spawning thousands
-@export_range(1, 50) var object_density: int = 8
-@export_range(0.5, 20.0) var object_min_spacing: float = 1.5
+# Object placement controls (TerrainObjectPlacer). Simple "stamp" model:
+# with the Object tool active, dragging lays ONE instance per
+# `object_spacing` units travelled (a held finger places exactly one).
+# Replaces the old random-scatter system.
+#   - object_spacing: min distance between consecutive placements.
+#   - object_scale:   uniform scale applied to each placed instance — lets a
+#                     large source mesh be shrunk so it isn't a "giant cube".
+#   - object_align_to_normal: tilt instances to follow the surface slope
+#                     (off = always upright / standing straight).
+#   - object_random_yaw: random spin around the up axis so repeated objects
+#                     don't look identical (off = deterministic).
+@export_range(0.1, 50.0) var object_spacing: float = 2.0
+@export_range(0.01, 100.0) var object_scale: float = 1.0
+@export var object_align_to_normal: bool = false
+@export var object_random_yaw: bool = false
 # V21: timestamp of last brush application, seconds. Used by
 # apply_brush_stroke_slope to throttle stationary strokes.
 var _last_brush_apply_time: float = 0.0
@@ -251,8 +249,8 @@ var _deferred_chunk_size: int = 0
 # Prevents setter cascade -> initialize_terrain -> setter cascade loops.
 var _rebuilding_terrain: bool = false
 
-# V20 FIX: Emitted whenever `_place_foliage_slope()` successfully adds an
-# instance to a MultiMesh. The editor plugin listens to this signal to
+# Emitted whenever TerrainObjectPlacer successfully adds an instance to a
+# MultiMesh. The editor plugin listens to this signal to
 # build per-stroke undo actions for object placement — without it, plugin
 # code has no way to know which MultiMesh got modified or which transform
 # was added (placement is internal to the node, and modifying height_data
@@ -1255,7 +1253,9 @@ func save_terrain_data() -> int:
 
 	var err := ResourceSaver.save(data, external_data_path)
 	if err != OK:
-		TerrainDiagnostics.error(TerrainDiagnostics.E_SAVE_RESOURCE_FAILED, [external_data_path, err])
+		TerrainDiagnostics.error(
+			TerrainDiagnostics.E_SAVE_RESOURCE_FAILED, [external_data_path, err]
+		)
 		return err
 	return OK
 
@@ -1714,13 +1714,14 @@ func force_refresh_splatmap() -> void:
 		terrain_material.set_shader_parameter("splatmap", splatmap_texture_local)
 
 
-# TKT-011 PR-2: gather placed objects for persistence into the .res. One
-# entry per active MultiMesh: its mesh resource_path + every instance
-# transform. Empty multimeshes are skipped.
+# Gather placed objects for persistence into the .res. One entry per active
+# MultiMesh: the Mesh resource itself + every instance transform. Storing the
+# Mesh (not a path string) lets inspector primitives with no resource_path
+# persist too. Empty multimeshes are skipped.
 func _collect_object_slots() -> Array:
 	var slots: Array = []
-	for path in multimesh_instances:
-		var mmi = multimesh_instances[path]
+	for mesh in multimesh_instances:
+		var mmi = multimesh_instances[mesh]
 		if not is_instance_valid(mmi) or mmi.multimesh == null:
 			continue
 		var mm: MultiMesh = mmi.multimesh
@@ -1731,29 +1732,34 @@ func _collect_object_slots() -> Array:
 		transforms.resize(count)
 		for i in range(count):
 			transforms[i] = mm.get_instance_transform(i)
-		slots.append({"mesh_path": path, "transforms": transforms})
+		slots.append({"mesh": mesh, "transforms": transforms})
 	return slots
 
 
-# TKT-011 PR-2: rebuild MultiMesh instances from .res object data. Skips a
-# slot whose mesh can't be loaded (deleted asset) with a warning rather than
-# erroring out the whole load.
+# Rebuild MultiMesh instances from .res object data. Skips a slot whose mesh
+# can't be resolved with a warning rather than erroring out the whole load.
 func _restore_object_slots(slots: Array) -> void:
 	if slots == null or slots.is_empty():
 		return
 	for slot in slots:
-		var mesh_path: String = slot.get("mesh_path", "")
 		var transforms = slot.get("transforms", [])
-		if mesh_path == "" or transforms.is_empty():
+		if transforms.is_empty():
 			continue
-		if not ResourceLoader.exists(mesh_path):
-			TerrainDiagnostics.warn(
-				"MT-W16: object mesh '%s' not found; skipping its placements." % mesh_path
-			)
-			continue
-		var mesh = load(mesh_path)
-		if not (mesh is Mesh):
-			continue
+		# New format stores the Mesh resource directly (works for inspector
+		# primitives with no resource_path). Old .res files stored a
+		# "mesh_path" string instead — load it so existing saves still restore.
+		var mesh: Mesh = slot.get("mesh", null)
+		if mesh == null:
+			var mesh_path: String = slot.get("mesh_path", "")
+			if mesh_path == "" or not ResourceLoader.exists(mesh_path):
+				TerrainDiagnostics.warn(
+					"MT-W16: object mesh '%s' not found; skipping its placements." % mesh_path
+				)
+				continue
+			var res = load(mesh_path)
+			if not (res is Mesh):
+				continue
+			mesh = res
 		var mmi = _get_or_create_multimesh(mesh)
 		if mmi == null:
 			continue
@@ -1768,22 +1774,18 @@ func restore_multimeshes():
 	for child in get_children():
 		if child is MultiMeshInstance3D and child.name.begins_with("Assets_"):
 			if child.multimesh and child.multimesh.mesh:
-				multimesh_instances[child.multimesh.mesh.resource_path] = child
+				multimesh_instances[child.multimesh.mesh] = child
 
 
 func garbage_collect_multimeshes():
-	# V21: `keys_to_remove` was declared but never used. Removed.
-	# Godot 4's Dictionary.keys() returns a fresh Array, so mutating
-	# the dict inside the loop is safe — no need for a two-pass dance.
-	for path in multimesh_instances.keys():
-		var mesh_exists = false
-		for m in asset_meshes:
-			if m and m.resource_path == path:
-				mesh_exists = true
-				break
-		if not mesh_exists:
-			var child = multimesh_instances[path]
-			multimesh_instances.erase(path)
+	# Drop any MultiMesh whose mesh is no longer referenced by an asset slot.
+	# keys() returns a fresh Array so erasing inside the loop is safe.
+	for mesh in multimesh_instances.keys():
+		if mesh in asset_meshes:
+			continue
+		var child = multimesh_instances[mesh]
+		multimesh_instances.erase(mesh)
+		if is_instance_valid(child):
 			child.queue_free()
 
 
@@ -1806,8 +1808,7 @@ func garbage_collect_multimeshes():
 #
 # Returns true if the swap happened. Returns false (with no side effect)
 # when a safe swap isn't possible:
-#   - either mesh is null or has an empty resource_path (can't key it)
-#   - old and new paths are identical (no-op)
+#   - either mesh is null, or old == new (no-op)
 #   - the old mesh has no multimesh (nothing to preserve)
 #   - the new mesh ALREADY has its own multimesh (conflict — preserving
 #     would require merging two transform buffers, which is a UX
@@ -1815,53 +1816,33 @@ func garbage_collect_multimeshes():
 #
 # Called from mobile_terrain_plugin.gd::_on_object_changed.
 func repurpose_multimesh_to(old_mesh: Mesh, new_mesh: Mesh) -> bool:
-	if old_mesh == null or new_mesh == null:
+	if old_mesh == null or new_mesh == null or old_mesh == new_mesh:
 		return false
-	var old_path := old_mesh.resource_path
-	var new_path := new_mesh.resource_path
-	if old_path == "" or new_path == "" or old_path == new_path:
+	if not multimesh_instances.has(old_mesh):
 		return false
-	if not multimesh_instances.has(old_path):
-		return false
-	if multimesh_instances.has(new_path):
+	if multimesh_instances.has(new_mesh):
 		return false  # Caller should GC instead — see docstring
 
-	var mmi: MultiMeshInstance3D = multimesh_instances[old_path]
+	var mmi: MultiMeshInstance3D = multimesh_instances[old_mesh]
 	if not is_instance_valid(mmi) or mmi.multimesh == null:
 		return false
 
-	# Swap the rendered mesh; instance_count and per-instance transforms
-	# are unaffected by changing `mesh`, so all 50 trees remain at their
-	# painted positions but now render as the new model.
+	# Swap the rendered mesh; instance_count and per-instance transforms are
+	# unaffected by changing `mesh`, so every placement stays put but now
+	# renders as the new model.
 	mmi.multimesh.mesh = new_mesh
-	# Rename the node so the Scene dock (if visible) reflects reality.
-	mmi.name = "Assets_" + new_path.get_file().get_basename()
-	# Re-key the dictionary so future lookups by new_mesh find this mmi.
-	multimesh_instances.erase(old_path)
-	multimesh_instances[new_path] = mmi
+	mmi.name = "Assets_" + TerrainObjectPlacer.mesh_label(new_mesh)
+	# Re-key the registry so future lookups by new_mesh find this mmi.
+	multimesh_instances.erase(old_mesh)
+	multimesh_instances[new_mesh] = mmi
 	return true
 
 
 func _get_or_create_multimesh(target_mesh: Mesh) -> MultiMeshInstance3D:
-	if target_mesh == null or target_mesh.resource_path == "":
-		return null
-	var path = target_mesh.resource_path
-	if multimesh_instances.has(path):
-		return multimesh_instances[path]
-	var mmi = MultiMeshInstance3D.new()
-	mmi.name = "Assets_" + path.get_file().get_basename()
-	add_child(mmi)
-	# TKT-011 PR-2: objects persist in the .res (object_slots), NOT in the
-	# scene. Deliberately do NOT set mmi.owner (that would serialize the node
-	# into the .tscn) and do NOT set resource_local_to_scene. The multimesh
-	# is a runtime-only child, rebuilt by _restore_object_slots on load.
-	var mm = MultiMesh.new()
-	mm.transform_format = MultiMesh.TRANSFORM_3D
-	mm.instance_count = 0
-	mm.mesh = target_mesh
-	mmi.multimesh = mm
-	multimesh_instances[path] = mmi
-	return mmi
+	# Delegates to TerrainObjectPlacer. No resource_path requirement now, so
+	# inspector primitives (BoxMesh, ...) place correctly; the registry is
+	# keyed by the Mesh resource itself (see systems/object_placer.gd).
+	return TerrainObjectPlacer.get_or_create_mmi(self, target_mesh, multimesh_instances)
 
 
 func get_intersection_raymarch_persistent(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
@@ -1912,33 +1893,25 @@ func end_stroke():
 
 
 func apply_brush_stroke_slope(hit_point: Vector3, hit_normal: Vector3):
-	if current_tool == 8:  # Object — V21: scatter mode
-		# V21 SCATTER REWRITE.
-		#
-		# The old code placed ONE instance per dab when the brush had
-		# moved at least 3.0 units from its previous placement spot.
-		# Result: holding the finger still placed nothing (distance
-		# never crossed the threshold), tap-and-release placed exactly
-		# one object (boring), and the 3.0 was independent of brush
-		# radius so a 30-unit brush still placed one tree every 3
-		# units instead of spreading them across the footprint.
-		#
-		# New behaviour: every successful dab (i.e. movement OR rate
-		# limit interval elapsed) attempts `object_density` random
-		# placements inside the current brush footprint. The throttle
-		# below uses the same MIN_STATIONARY_INTERVAL as the sculpt
-		# tools so a held-still finger doesn't fire 60 dabs/second.
-		const MIN_OBJECT_INTERVAL := 0.08  # ~12 dabs/sec held-still
-		var now_obj: float = Time.get_ticks_msec() / 1000.0
-		var moved_obj: bool = (
-			last_placement_pos == Vector3.INF
-			or last_placement_pos.distance_to(hit_point) > max(0.5, brush_radius * 0.5)
-		)
-		if not moved_obj and (now_obj - _last_brush_apply_time) < MIN_OBJECT_INTERVAL:
+	if current_tool == 8:  # Object — simple one-per-step stamp
+		# Drag lays a spaced trail; a held-still finger places exactly one.
+		# Delegated to TerrainObjectPlacer (systems/object_placer.gd).
+		if current_object_slot < 0 or current_object_slot >= asset_meshes.size():
 			return
-		_last_brush_apply_time = now_obj
-		_scatter_foliage(hit_point, hit_normal)
-		last_placement_pos = hit_point
+		var mesh: Mesh = asset_meshes[current_object_slot]
+		if mesh == null:
+			return
+		if not TerrainObjectPlacer.should_place(last_placement_pos, hit_point, object_spacing):
+			return
+		var mmi := TerrainObjectPlacer.get_or_create_mmi(self, mesh, multimesh_instances)
+		if mmi == null:
+			return
+		var idx := TerrainObjectPlacer.place_one(
+			mmi, hit_point, hit_normal, object_scale, object_align_to_normal, object_random_yaw
+		)
+		if idx >= 0:
+			last_placement_pos = hit_point
+			foliage_placed.emit(mmi, idx, mmi.multimesh.get_instance_transform(idx))
 		return
 
 	# V21: rate-limit stationary brush application.
@@ -2243,109 +2216,3 @@ func _mark_chunk_dirty(x: int, z: int):
 		dirty_chunks[Vector2i(cx - 1, cz)] = true
 	if z % chunk_size == 1 and cz > 0:
 		dirty_chunks[Vector2i(cx, cz - 1)] = true
-
-
-func _place_foliage_slope(pos: Vector3, normal: Vector3):
-	# V21 NOTE: this single-instance placer is kept as a building block
-	# called by _scatter_foliage. It can still be called directly from
-	# scripts that want to drop one instance at a specific spot, but
-	# the editor brush goes through _scatter_foliage now.
-	if current_object_slot < 0 or current_object_slot >= asset_meshes.size():
-		return
-	var mesh = asset_meshes[current_object_slot]
-	if mesh == null:
-		return
-	var mmi = _get_or_create_multimesh(mesh)
-	if not mmi:
-		return
-
-	var mm = mmi.multimesh
-	var count = mm.instance_count
-	mm.instance_count = count + 1
-	# TKT-003 Phase A.3: orientation math extracted into FoliageSystem.
-	var tf: Transform3D = FoliageSystem.compute_orientation_transform(pos, normal)
-	mm.set_instance_transform(count, tf)
-
-	# V20 FIX: notify any listening editor plugin so it can record this
-	# placement in the undo history. Done last, after the placement has
-	# fully succeeded, so listeners only ever see valid state.
-	foliage_placed.emit(mmi, count, tf)
-
-
-# V21: scatter `object_density` instances inside the current brush
-# footprint. Each candidate point is rejected if it lands within
-# object_min_spacing of an instance already placed THIS DAB, so we
-# don't pile up at the same spot. Across dabs we don't bother — the
-# user can over-paint by passing the brush over the same area.
-#
-# Slope-relevant: each placement re-raycasts the terrain height at its
-# (x, z) position, so instances sit on the surface even if the brush
-# was held over a sloped area. The hit_normal from the original raymarch
-# is shared across all scatter samples because re-raymarching N times
-# per dab on mobile is wasteful and the normal at the centre is a fine
-# approximation across the small radius.
-func _scatter_foliage(centre: Vector3, normal: Vector3):
-	if current_object_slot < 0 or current_object_slot >= asset_meshes.size():
-		return
-	var mesh = asset_meshes[current_object_slot]
-	if mesh == null:
-		return
-	var mmi = _get_or_create_multimesh(mesh)
-	if not mmi:
-		return
-
-	# Collect placements first so we can reject candidates against
-	# already-placed neighbours from THIS dab. The list of accepted
-	# positions for spacing check is local to this call.
-	var accepted_positions: Array[Vector3] = []
-	var min_sq: float = object_min_spacing * object_min_spacing
-	var attempts: int = 0
-	var max_attempts: int = object_density * 4  # 25% acceptance budget
-
-	while accepted_positions.size() < object_density and attempts < max_attempts:
-		attempts += 1
-		# Uniform sample inside the disc: sqrt-of-uniform for radius,
-		# uniform for angle. Naive (r = brush_radius * randf()) would
-		# bunch in the centre.
-		var r: float = brush_radius * sqrt(randf())
-		var angle: float = randf() * TAU
-		var dx: float = cos(angle) * r
-		var dz: float = sin(angle) * r
-		var sample_x: float = centre.x + dx
-		var sample_z: float = centre.z + dz
-
-		# Re-sample terrain height at the candidate (x, z) so the
-		# instance sits on the surface even when the brush is over a
-		# slope. get_height clamps internally; subtract our global y
-		# to convert world → local then add it back.
-		var local_x: int = int(floor(sample_x - global_position.x))
-		var local_z: int = int(floor(sample_z - global_position.z))
-		var sample_y: float = get_height(local_x, local_z) + global_position.y
-		var candidate := Vector3(sample_x, sample_y, sample_z)
-
-		# Spacing check against the dab's own placements.
-		var ok: bool = true
-		for p in accepted_positions:
-			if p.distance_squared_to(candidate) < min_sq:
-				ok = false
-				break
-		if not ok:
-			continue
-		accepted_positions.append(candidate)
-
-	# Now actually write the accepted instances to the MultiMesh.
-	# Doing this in a second pass lets us grow instance_count once
-	# instead of N times (each grow potentially reallocates the
-	# transform buffer).
-	if accepted_positions.is_empty():
-		return
-	var mm = mmi.multimesh
-	var base_count: int = mm.instance_count
-	mm.instance_count = base_count + accepted_positions.size()
-	for i in range(accepted_positions.size()):
-		var pos: Vector3 = accepted_positions[i]
-		# TKT-003 Phase A.3: orientation math extracted into FoliageSystem.
-		var tf: Transform3D = FoliageSystem.compute_orientation_transform(pos, normal)
-		var instance_idx: int = base_count + i
-		mm.set_instance_transform(instance_idx, tf)
-		foliage_placed.emit(mmi, instance_idx, tf)

@@ -530,7 +530,9 @@ func _on_texture_slot_selected(idx: int):
 
 func _on_object_slot_selected(idx: int):
 	if selected_node:
-		selected_node.current_object_slot = idx
+		# Use the item ID (= asset_meshes index), not the visible row index,
+		# so the correct slot is selected even if items are ever reordered.
+		selected_node.current_object_slot = object_opt.get_item_id(idx)
 
 
 # V21: BRUSH MASK PICKER
@@ -1797,7 +1799,10 @@ func _save_external_data() -> void:
 	var err: int = _save_orchestrator.save_all_terrains(root)
 	if err != OK:
 		push_error(
-			"MobileTerrain3D: terrain data save failed (error %d). See Output for the failing path." % err
+			(
+				"MobileTerrain3D: terrain data save failed (error %d). See Output for the failing path."
+				% err
+			)
 		)
 
 
