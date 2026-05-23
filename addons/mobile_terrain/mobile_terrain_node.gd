@@ -842,7 +842,7 @@ func update_shader_textures():
 
 # V21: Per-type blank textures. Each map type needs a different default
 # colour for the "empty slot" placeholder:
-#   - albedo  → (0,0,0,0): transparent black, no colour contribution
+#   - albedo  → (0.5,0.5,0.5,1): neutral grey so an empty slot stays visible
 #   - normal  → (0.5,0.5,1,1): flat tangent-space normal (Z-up = no bump)
 #   - white   → (1,1,1,1): full roughness, full AO (no occlusion)
 # Each is cached once per type, lazily created.
@@ -856,7 +856,10 @@ func _get_or_create_blank_texture(map_type: String) -> ImageTexture:
 	var col := Color(0, 0, 0, 0)
 	match map_type:
 		"albedo":
-			col = Color(0, 0, 0, 0)
+			# Neutral mid-grey (not transparent black) so an unassigned albedo
+			# slot shows as plain grey terrain instead of alarming black that
+			# reads as "my texture didn't apply".
+			col = Color(0.5, 0.5, 0.5, 1.0)
 		"normal":
 			# Tangent-space "flat" normal: X=0, Y=0, Z=1 → encoded (0.5, 0.5, 1.0)
 			col = Color(0.5, 0.5, 1.0, 1.0)
