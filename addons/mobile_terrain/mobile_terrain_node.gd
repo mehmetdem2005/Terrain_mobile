@@ -1248,6 +1248,11 @@ func save_terrain_data() -> int:
 			data.splatmap_bytes = img.get_data().duplicate()
 			data.splatmap_size = img.get_width()
 
+	# TKT-011 PR-2: persist placed objects (foliage) in the .res too, so they
+	# survive save/load instead of relying on MultiMeshInstance3D nodes baked
+	# into the .tscn.
+	data.object_slots = _collect_object_slots()
+
 	var err := ResourceSaver.save(data, external_data_path)
 	if err != OK:
 		TerrainDiagnostics.error(TerrainDiagnostics.E_SAVE_RESOURCE_FAILED, [external_data_path, err])
@@ -1345,6 +1350,10 @@ func _load_external_data_if_set() -> void:
 	# the canonical store) and update map_size to match.
 	if data.map_size != map_size and data.map_size > 0:
 		map_size = data.map_size  # cascades through _set_map_size
+
+	# TKT-011 PR-2: rebuild placed objects from the .res. Old .res files
+	# without an object_slots field load it as an empty Array → no-op.
+	_restore_object_slots(data.object_slots)
 
 
 # V23 SECURITY (TKT-002 C1): whitelist external_data_path to project-
@@ -1705,6 +1714,55 @@ func force_refresh_splatmap() -> void:
 		terrain_material.set_shader_parameter("splatmap", splatmap_texture_local)
 
 
+# TKT-011 PR-2: gather placed objects for persistence into the .res. One
+# entry per active MultiMesh: its mesh resource_path + every instance
+# transform. Empty multimeshes are skipped.
+func _collect_object_slots() -> Array:
+	var slots: Array = []
+	for path in multimesh_instances:
+		var mmi = multimesh_instances[path]
+		if not is_instance_valid(mmi) or mmi.multimesh == null:
+			continue
+		var mm: MultiMesh = mmi.multimesh
+		var count: int = mm.instance_count
+		if count <= 0:
+			continue
+		var transforms: Array[Transform3D] = []
+		transforms.resize(count)
+		for i in range(count):
+			transforms[i] = mm.get_instance_transform(i)
+		slots.append({"mesh_path": path, "transforms": transforms})
+	return slots
+
+
+# TKT-011 PR-2: rebuild MultiMesh instances from .res object data. Skips a
+# slot whose mesh can't be loaded (deleted asset) with a warning rather than
+# erroring out the whole load.
+func _restore_object_slots(slots: Array) -> void:
+	if slots == null or slots.is_empty():
+		return
+	for slot in slots:
+		var mesh_path: String = slot.get("mesh_path", "")
+		var transforms = slot.get("transforms", [])
+		if mesh_path == "" or transforms.is_empty():
+			continue
+		if not ResourceLoader.exists(mesh_path):
+			TerrainDiagnostics.warn(
+				"MT-W16: object mesh '%s' not found; skipping its placements." % mesh_path
+			)
+			continue
+		var mesh = load(mesh_path)
+		if not (mesh is Mesh):
+			continue
+		var mmi = _get_or_create_multimesh(mesh)
+		if mmi == null:
+			continue
+		var mm: MultiMesh = mmi.multimesh
+		mm.instance_count = transforms.size()
+		for i in range(transforms.size()):
+			mm.set_instance_transform(i, transforms[i])
+
+
 func restore_multimeshes():
 	multimesh_instances.clear()
 	for child in get_children():
@@ -1793,15 +1851,15 @@ func _get_or_create_multimesh(target_mesh: Mesh) -> MultiMeshInstance3D:
 	var mmi = MultiMeshInstance3D.new()
 	mmi.name = "Assets_" + path.get_file().get_basename()
 	add_child(mmi)
-	if get_tree() and get_tree().edited_scene_root:
-		mmi.owner = get_tree().edited_scene_root
+	# TKT-011 PR-2: objects persist in the .res (object_slots), NOT in the
+	# scene. Deliberately do NOT set mmi.owner (that would serialize the node
+	# into the .tscn) and do NOT set resource_local_to_scene. The multimesh
+	# is a runtime-only child, rebuilt by _restore_object_slots on load.
 	var mm = MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.instance_count = 0
 	mm.mesh = target_mesh
 	mmi.multimesh = mm
-	if get_tree() and get_tree().edited_scene_root:
-		mmi.multimesh.resource_local_to_scene = true
 	multimesh_instances[path] = mmi
 	return mmi
 
