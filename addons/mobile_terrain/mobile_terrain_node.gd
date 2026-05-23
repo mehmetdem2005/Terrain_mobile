@@ -705,7 +705,7 @@ vec3 _mt_triplanar(sampler2D s, vec3 wpos) {
 // triplanar_blend uniform. When 0 we skip the extra samples entirely,
 // when > 0 we lerp between the XZ projection and full triplanar so
 // the user gets a smooth dial-in.
-vec3 _mt_albedo_sample(sampler2D s, vec3 wpos) {
+vec3 _mt_slot_sample(sampler2D s, vec3 wpos) {
 	vec3 xz = _mt_sample_var(s, wpos.xz * tex_scale);
 	if (triplanar_blend < 0.001) return xz;
 	vec3 tri = _mt_triplanar(s, wpos);
@@ -735,59 +735,40 @@ void fragment() {
 		blend = vec4(1.0, 0.0, 0.0, 0.0);
 	}
 
-	vec2 uv = v_world_pos.xz * tex_scale;
-
-	// === Albedo: 4-way splatmap blend, anti-tile via _mt_sample_var ===
-	// Albedo is the most visually obvious tiling target so the variation
-	// sampler is applied here. Normal/roughness/AO keep single-sample
-	// because (a) they tile less obviously, (b) ×4 extra samples each
-	// on mobile is too much.
-	// === Albedo: 4-way splatmap blend, anti-tile + optional triplanar ===
-	// _mt_albedo_sample handles the whole sampling path: variation,
-	// rotation jitter, and triplanar projection. Pass world_pos so the
-	// triplanar branch can read all three planes from the same point.
-	vec3 c0 = _mt_albedo_sample(tex_a_0, v_world_pos);
-	vec3 c1 = _mt_albedo_sample(tex_a_1, v_world_pos);
-	vec3 c2 = _mt_albedo_sample(tex_a_2, v_world_pos);
-	vec3 c3 = _mt_albedo_sample(tex_a_3, v_world_pos);
+	// === All four maps share ONE sampling path (TKT-010) ===
+	// albedo, normal, roughness AND ao all call _mt_slot_sample so a slot's
+	// maps share variation / rotation jitter / triplanar and stay coherent
+	// when tex_scale / texture_variation / rotation_jitter / triplanar_blend
+	// change. (Previously roughness/ao sampled flat texture(uv) and desynced
+	// from albedo.) Single-channel maps take .r.
+	vec3 c0 = _mt_slot_sample(tex_a_0, v_world_pos);
+	vec3 c1 = _mt_slot_sample(tex_a_1, v_world_pos);
+	vec3 c2 = _mt_slot_sample(tex_a_2, v_world_pos);
+	vec3 c3 = _mt_slot_sample(tex_a_3, v_world_pos);
 	ALBEDO = c0 * blend.r + c1 * blend.g + c2 * blend.b + c3 * blend.a;
 
-	// === Normal: linear blend in tangent space ===
-	// Linear blending of tangent-space normals isn't perfectly correct
-	// (Reoriented Normal Mapping is the strict-PBR approach), but it's
-	// fast and looks fine for terrain where you rarely have one normal
-	// map at full strength against an opposing one. We let Godot decode
-	// the resulting RGB back to (-1..1) tangent normal via NORMAL_MAP.
-	// V21: when triplanar_blend > 0, normal maps also go through the
-	// triplanar sampler. Otherwise the lit-direction would stay locked
-	// to the XZ projection on steep cliffs while the albedo correctly
-	// triplanars — producing mismatched highlights ("plastic-looking
-	// vertical faces"). Sampling normals through the same path as
-	// albedo keeps the lighting and the surface look in sync.
-	// Cost: another 3x texture reads per slot when triplanar is on; the
-	// alternative (different mapping for albedo vs normal) looks worse.
-	vec3 n0 = _mt_albedo_sample(tex_n_0, v_world_pos);
-	vec3 n1 = _mt_albedo_sample(tex_n_1, v_world_pos);
-	vec3 n2 = _mt_albedo_sample(tex_n_2, v_world_pos);
-	vec3 n3 = _mt_albedo_sample(tex_n_3, v_world_pos);
+	// Normal: linear tangent-space blend (not strict RNM, but fast and fine
+	// for terrain). Same path as albedo so lighting and surface stay in sync
+	// on slopes.
+	vec3 n0 = _mt_slot_sample(tex_n_0, v_world_pos);
+	vec3 n1 = _mt_slot_sample(tex_n_1, v_world_pos);
+	vec3 n2 = _mt_slot_sample(tex_n_2, v_world_pos);
+	vec3 n3 = _mt_slot_sample(tex_n_3, v_world_pos);
 	NORMAL_MAP = n0 * blend.r + n1 * blend.g + n2 * blend.b + n3 * blend.a;
 	NORMAL_MAP_DEPTH = normal_strength;
 
-	// === Roughness: scalar blend, multiplied by global multiplier ===
-	float r0 = texture(tex_r_0, uv).r;
-	float r1 = texture(tex_r_1, uv).r;
-	float r2 = texture(tex_r_2, uv).r;
-	float r3 = texture(tex_r_3, uv).r;
+	// Roughness: scalar blend, multiplied by global multiplier.
+	float r0 = _mt_slot_sample(tex_r_0, v_world_pos).r;
+	float r1 = _mt_slot_sample(tex_r_1, v_world_pos).r;
+	float r2 = _mt_slot_sample(tex_r_2, v_world_pos).r;
+	float r3 = _mt_slot_sample(tex_r_3, v_world_pos).r;
 	ROUGHNESS = clamp((r0 * blend.r + r1 * blend.g + r2 * blend.b + r3 * blend.a) * roughness_multiplier, 0.0, 1.0);
 
-	// === AO: scalar blend, lerped against 1.0 by ao_strength ===
-	// ao_strength=0 → no occlusion (AO=1), ao_strength=1 → full occlusion
-	// from the maps. Letting users dial this back keeps shadows from
-	// looking too crunchy under bright ambient light.
-	float ao0 = texture(tex_ao_0, uv).r;
-	float ao1 = texture(tex_ao_1, uv).r;
-	float ao2 = texture(tex_ao_2, uv).r;
-	float ao3 = texture(tex_ao_3, uv).r;
+	// AO: scalar blend, lerped against 1.0 by ao_strength.
+	float ao0 = _mt_slot_sample(tex_ao_0, v_world_pos).r;
+	float ao1 = _mt_slot_sample(tex_ao_1, v_world_pos).r;
+	float ao2 = _mt_slot_sample(tex_ao_2, v_world_pos).r;
+	float ao3 = _mt_slot_sample(tex_ao_3, v_world_pos).r;
 	float ao = ao0 * blend.r + ao1 * blend.g + ao2 * blend.b + ao3 * blend.a;
 	AO = mix(1.0, ao, ao_strength);
 	AO_LIGHT_AFFECT = 1.0;
@@ -852,13 +833,6 @@ func update_shader_textures():
 	smat.set_shader_parameter("texture_cell_size", texture_cell_size)
 	smat.set_shader_parameter("rotation_jitter", rotation_jitter)
 	smat.set_shader_parameter("triplanar_blend", triplanar_blend)
-	# V23 (TKT-002 C6): tell the shader to skip triplanar on Forward Mobile.
-	# Triplanar takes 3x texture reads per sample; with 4 slots that exceeds
-	# mid-tier mobile GPU texture-unit budgets. Detection uses RenderingServer
-	# rather than ProjectSettings so it stays correct even when the user
-	# overrides the renderer per-scene.
-	smat.set_shader_parameter("mobile_quality", _is_mobile_renderer())
-
 	# V21: Bind all four map types per slot. Empty slots get type-correct
 	# default textures (transparent for albedo, flat normal for normals,
 	# white for roughness/AO) instead of `null`, because Godot 4 silently
@@ -1511,22 +1485,6 @@ static func _is_safe_external_path(p: String) -> bool:
 	if not (p.begins_with("res://") or p.begins_with("user://")):
 		return false
 	return true
-
-
-# V23 (TKT-002 C6): Forward Mobile / Compatibility renderer detection.
-# Used by the shader binding to skip expensive 3x triplanar sampling on
-# devices that can't afford it. RenderingServer.get_current_rendering_method()
-# returns "forward_plus", "mobile", or "gl_compatibility" in 4.6.2.
-static func _is_mobile_renderer() -> bool:
-	var rs := RenderingServer
-	if rs == null:
-		return false
-	# get_current_rendering_method exists from 4.4+; defensive has_method
-	# in case the symbol moves or we ship on an older runtime.
-	if not rs.has_method("get_current_rendering_method"):
-		return false
-	var method: String = rs.get_current_rendering_method()
-	return method == "mobile" or method == "gl_compatibility"
 
 
 func get_height(x: int, z: int) -> float:
