@@ -2,126 +2,40 @@
 class_name TerrainSaveOrchestrator
 extends RefCounted
 
-# V22 Plan B save flow, isolated from the EditorPlugin shell.
+# TKT-011: simplified save flow.
 #
-# Why this exists
-# ---------------
-# Godot 4.6 calls EditorPlugin._save_external_data AFTER the .tscn is
-# already on disk, and the _validate_property NOSTORE toggle is ignored
-# by the serializer. Earlier addon versions tried to schedule a second
-# EditorInterface.save_scene() via call_deferred — that re-entry was
-# racy in 4.6 (the deferred call sometimes never reached this codebase's
-# logging point in user-reported logs).
+# Heavy terrain data (height + splatmap + objects) is no longer @export'd on
+# MobileTerrain3D — it's a plain var, so the serializer NEVER writes it into
+# the .tscn. That removes the whole reason the old "Plan B" existed: there's
+# nothing to strip from the scene, so no NOSTORE toggle, no pack/wipe/restore
+# dance, no deferred restore callback.
 #
-# Plan B bypasses EditorInterface entirely:
-#   1. Externalise qualifying terrains (write a .res companion).
-#   2. Snapshot the live heavy arrays + ImageTextures, then wipe them.
-#   3. PackedScene.pack(edited_root) + ResourceSaver.save(packed, path).
-#   4. Restore the snapshots so the live editor stays renderable.
-#
-# Deterministic, single-pass, no re-entrancy, no suppress flag.
+# EditorPlugin._save_external_data just asks each terrain in the edited scene
+# to write its own companion .res under res://terrain_data/. The terrain owns
+# directory creation + path binding (save_terrain_data), and the whole thing
+# is scene-INDEPENDENT — it works even on an unsaved/untitled scene, which is
+# what kept failing before.
 
 const _TerrainNode := preload("res://addons/mobile_terrain/mobile_terrain_node.gd")
 
 
-# Drive a full Plan B save against an editor-edited scene root. Returns
-# the ResourceSaver.save error code (OK on success). Safe to call from
-# any frame; the deferred restore is owned by `restore_host` so it lives
-# beyond this call.
-#
-# `restore_host`: any Node that's alive long enough to invoke the
-# deferred _restore_after_save callback (usually the EditorPlugin
-# itself).
-# TKT-007: decide whether a terrain's heavy data should move to a .res
-# companion. The rule is now size-independent: ANY terrain with data gets
-# externalised, so terrain data is NEVER baked inline into the .tscn
-# regardless of the map_size the user picks. (The old AUTO_EXTERNALIZE_
-# THRESHOLD only externalised >=256² terrains, leaving smaller ones embedded
-# — producing the large-text-scene the user hit.) A small terrain's .res is
-# cheap; the inline cost (slow text parse, git churn, the large-resource
-# warning) is what we avoid. Only re-externalise an already-external terrain
-# when its .res went missing.
-static func _should_externalize(height_size: int, path_set: bool, res_missing: bool) -> bool:
-	if height_size <= 0:
-		return false
-	return not path_set or res_missing
-
-
-func save_with_externalized_terrains(edited_root: Node, restore_host: Object) -> int:
+# Write every terrain's data to its .res companion. Returns the first non-OK
+# error encountered (OK if all succeed or there are no terrains with data).
+func save_all_terrains(edited_root: Node) -> int:
 	if edited_root == null:
 		return ERR_INVALID_PARAMETER
-	var scene_path: String = edited_root.scene_file_path
-	if scene_path.is_empty():
-		return ERR_FILE_NOT_FOUND
 	var terrains: Array = []
 	_collect_terrains(edited_root, terrains)
-	if terrains.is_empty():
-		return OK
-	var backups: Array = []
+	var first_err: int = OK
 	for terrain in terrains:
-		if not is_instance_valid(terrain):
+		if not is_instance_valid(terrain) or not (terrain is _TerrainNode):
 			continue
-		var path_set: bool = terrain.external_data_path != ""
-		var res_missing: bool = path_set and not ResourceLoader.exists(terrain.external_data_path)
-		if _should_externalize(terrain.height_data.size(), path_set, res_missing):
-			if res_missing:
-				terrain._suppress_external_path_setter = true
-				terrain.external_data_path = ""
-				terrain._suppress_external_path_setter = false
-			terrain._externalize_data(true)
-			# V22 Phase 4: if externalisation failed (path still empty)
-			# the heavy data will be serialised inline. Warn loudly so
-			# the user can see WHICH terrain got the inline fallback.
-			if terrain.external_data_path == "":
-				(
-					TerrainDiagnostics
-					. warn(
-						(
-							"MT-W14: Externalize failed for terrain '%s' (%d cells). Heavy data will stay inline in .tscn."
-							% [terrain.name, terrain.height_data.size()]
-						)
-					)
-				)
-		if terrain.external_data_path != "" and terrain.height_data.size() > 0:
-			(
-				backups
-				. append(
-					{
-						"node": terrain,
-						"height_data": terrain.height_data,
-						"splatmap_texture_local": terrain.splatmap_texture_local,
-					}
-				)
-			)
-			terrain.height_data = PackedFloat32Array()
-			terrain.splatmap_texture_local = null
-	if backups.is_empty():
-		return OK
-
-	var packed := PackedScene.new()
-	var pack_err := packed.pack(edited_root)
-	if pack_err != OK:
-		TerrainDiagnostics.error(TerrainDiagnostics.E_SAVE_PACK_FAILED, [scene_path, pack_err])
-		_restore(backups)
-		return pack_err
-	var save_err := ResourceSaver.save(packed, scene_path)
-	if save_err != OK:
-		TerrainDiagnostics.error(TerrainDiagnostics.E_SAVE_RESOURCE_FAILED, [scene_path, save_err])
-
-	# Defer restore so any engine-side flush completes before we mutate
-	# the live nodes again. V22 Phase 4 fix: also check is_instance_valid
-	# so a queued callback can't hit a freed plugin (the user could
-	# disable the plugin or close the scene between pack and the deferred
-	# invocation).
-	if (
-		restore_host != null
-		and is_instance_valid(restore_host)
-		and restore_host.has_method("_terrain_restore_callback")
-	):
-		restore_host.call_deferred("_terrain_restore_callback", backups)
-	else:
-		_restore(backups)
-	return save_err
+		if terrain.height_data.is_empty():
+			continue  # nothing to persist yet
+		var err: int = terrain.save_terrain_data()
+		if err != OK and first_err == OK:
+			first_err = err
+	return first_err
 
 
 func _collect_terrains(node: Node, out: Array) -> void:
@@ -129,26 +43,3 @@ func _collect_terrains(node: Node, out: Array) -> void:
 		out.append(node)
 	for child in node.get_children():
 		_collect_terrains(child, out)
-
-
-func _restore(backups: Array) -> void:
-	for entry in backups:
-		if not entry.has("node"):
-			continue
-		var node = entry["node"]
-		if not is_instance_valid(node):
-			TerrainDiagnostics.warn(TerrainDiagnostics.W_RESTORE_INVALID)
-			continue
-		# TKT-004 H12 (fallback path): the deferred plugin callback was made
-		# typed; mirror it here so the synchronous _restore fallback also
-		# uses a typed cast + direct calls instead of has_method() string
-		# dispatch, which silently no-op'd on a rename.
-		if not (node is _TerrainNode):
-			continue
-		var terrain := node as _TerrainNode
-		if entry.has("height_data"):
-			terrain.height_data = entry["height_data"]
-		if entry.has("splatmap_texture_local"):
-			terrain.splatmap_texture_local = entry["splatmap_texture_local"]
-		terrain.force_update_all()
-		terrain.force_refresh_splatmap()

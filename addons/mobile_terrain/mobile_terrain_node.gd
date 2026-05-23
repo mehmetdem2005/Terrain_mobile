@@ -37,18 +37,15 @@ extends Node3D
 #
 # When external_data_path is non-empty, _validate_property strips
 # PROPERTY_USAGE_STORAGE so save() skips these fields. The data stays
-# in memory (rendering still works); only what Godot writes to disk
-# changes. When external_data_path is empty, USAGE stays at DEFAULT
-# and the data is embedded inline as usual.
-@export var height_data: PackedFloat32Array
-@export var splatmap_texture_local: ImageTexture
-# V21: inspector triggers for external-storage migration. Checking the
-# box runs the migration once, then auto-clears the box (same pattern
-# as click_to_import).
-@export var click_to_externalize: bool = false:
-	set = _externalize_data
-@export var click_to_inline: bool = false:
-	set = _inline_data
+# in memory (rendering still works); only what Godot writes to disk changes.
+#
+# TKT-011: heavy data is NEVER serialized into the .tscn. height_data and
+# splatmap_texture_local are PLAIN (non-@export) vars now — the scene only
+# persists external_data_path, and the data lives in a companion .res under
+# res://terrain_data/ (see save_terrain_data / load_terrain_data). This
+# deletes the old NOSTORE + pack/restore dance that kept failing to save.
+var height_data: PackedFloat32Array
+var splatmap_texture_local: ImageTexture
 
 @export_category("Varlık Yöneticisi")
 @export var terrain_textures: Array[Texture2D] = []
@@ -295,9 +292,9 @@ var noise_gen: FastNoiseLite
 # proposed but never wired to Node-class instances in any released
 # Godot 4 build, confirmed via engine source. _save_external_data on
 # EditorPlugin is the documented hook the engine actually calls.
-# TKT-007: externalisation is size-independent now (no threshold) — see
-# TerrainSaveOrchestrator._should_externalize. Any non-empty terrain's data
-# moves to a .res so nothing is baked inline into the .tscn.
+# TKT-011: every terrain always writes its data to a .res under
+# res://terrain_data/ (see save_terrain_data); nothing heavy is baked into
+# the .tscn because height_data/splatmap are plain (non-@export) vars.
 
 # V21: guard against the external_data_path setter cascading when WE
 # (internal code) assign it. Set true around internal assignments to
@@ -310,11 +307,11 @@ var _suppress_external_path_setter: bool = false
 # reload when the user manually edits the path, without breaking the
 # internal assign sites that just need to record the new path.
 #
-# Internal sites (_externalize_data, _load_external_data_if_set,
-# _inline_data, _restore_after_save in plugin) should set
-# _suppress_external_path_setter = true before writing the field, then
-# clear it after. User-driven edits (inspector typing, file picker)
-# leave the flag false and trigger the reload+initialise path.
+# Internal sites (save_terrain_data binding it on first save,
+# _load_external_data_if_set) set _suppress_external_path_setter = true
+# before writing the field, then clear it after. User-driven edits
+# (inspector typing, file picker) leave the flag false and trigger the
+# reload+initialise path.
 func _set_external_data_path(val: String) -> void:
 	var was_set := external_data_path != ""
 	external_data_path = val
@@ -355,30 +352,15 @@ func _set_external_data_path(val: String) -> void:
 #
 # When external_data_path is empty → add PROPERTY_USAGE_STORAGE so the
 # .tscn embeds the data (inline mode, the original behaviour pre-V21).
-# When external_data_path is non-empty → keep STORAGE off so save() skips
-# these fields; the .tscn only persists the path, and the data lives in
-# the companion .res file.
 func _validate_property(property: Dictionary) -> void:
-	# Hot path — _validate_property is called once per property per
-	# inspector refresh (potentially hundreds of times per second when
-	# focused). No debug printing here; we confirmed via earlier traces
-	# that Godot 4.6 calls this hook reliably, the gating just doesn't
-	# affect serialization in this version. Backup+resave in the plugin
-	# is what actually keeps the .tscn small.
-	if property.name == "height_data" or property.name == "splatmap_texture_local":
-		if external_data_path == "":
-			# Inline mode: enable STORAGE (and EDITOR for inspector visibility).
-			# PROPERTY_USAGE_DEFAULT bundles STORAGE | EDITOR | NETWORK.
-			property.usage = PROPERTY_USAGE_DEFAULT
-		else:
-			# External mode: editor sees them (for debugging) but save() skips.
-			property.usage = PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_SCRIPT_VARIABLE
-	elif property.name == "slope_rock_factor":
-		# TKT-006: dead V19/V20 property — the V21 PBR shader ignores it (rock
-		# is painted via the splatmap now, see _set_slope_rock). Keep STORAGE
-		# so old scenes still deserialize it without error, but drop EDITOR so
-		# it stops showing a non-functional "Eğim" control that the user can
-		# drag with no effect.
+	# TKT-006: dead V19/V20 property — the V21 PBR shader ignores
+	# slope_rock_factor (rock is painted via the splatmap now). Keep STORAGE
+	# so old scenes still deserialize it without error, but drop EDITOR so it
+	# stops showing a non-functional "Eğim" control.
+	# TKT-011: the old height_data/splatmap_texture_local NOSTORE gating is
+	# gone — they're plain (non-@export) vars, so the serializer never writes
+	# them and there's nothing to gate.
+	if property.name == "slope_rock_factor":
 		property.usage = PROPERTY_USAGE_STORAGE
 
 
@@ -1222,65 +1204,29 @@ func _reset_click_to_import() -> void:
 # rather than two, and one ResourceSaver call per save.
 
 
-func _externalize_data(val: bool) -> void:
-	if not val:
-		return
-	if not Engine.is_editor_hint():
-		# Runtime can't write resources (the project is exported, read-only).
-		# This is purely an editor-time migration helper.
-		TerrainDiagnostics.warn(TerrainDiagnostics.W_EXTERNALIZE_RUNTIME)
-		call_deferred("_reset_externalize")
-		return
-	# Pick a path next to the current scene file by default. If we can't
-	# infer one (e.g. node hasn't been saved into a scene yet), bail with
-	# a warning rather than dumping into res:// root.
-	var target_path: String = external_data_path
-	if target_path == "":
-		var scene_path: String = ""
-		var st := get_tree() if is_inside_tree() else null
-		if st != null and st.edited_scene_root != null:
-			scene_path = st.edited_scene_root.scene_file_path
-		if scene_path == "":
-			TerrainDiagnostics.warn(TerrainDiagnostics.W_SCENE_NOT_SAVED)
-			call_deferred("_reset_externalize")
-			return
-		# V21: sanitize node name for filesystem use. Node names can contain
-		# spaces and a handful of characters that some platforms or VCS
-		# tools mishandle in paths (Windows is the strictest). Replace any
-		# non-alphanumeric/non-underscore character with an underscore.
-		# Result: "My Terrain @1" → "My_Terrain__1". The mapping is one-way
-		# but stable across rename-free sessions, which is what we need.
-		# V21 FIX: Node3D's `name` is StringName, which doesn't support
-		# subscript indexing. Cast to String first.
-		var name_str: String = String(name)
-		var safe_name: String = ""
-		for i in range(name_str.length()):
-			var ch: String = name_str[i]
-			# Allowed: a-z, A-Z, 0-9, _. Everything else becomes _.
-			var is_lower: bool = ch >= "a" and ch <= "z"
-			var is_upper: bool = ch >= "A" and ch <= "Z"
-			var is_digit: bool = ch >= "0" and ch <= "9"
-			var is_underscore: bool = ch == "_"
-			if is_lower or is_upper or is_digit or is_underscore:
-				safe_name += ch
-			else:
-				safe_name += "_"
-		if safe_name == "":
-			safe_name = "terrain"  # Fallback for all-special-char names
-		target_path = scene_path.get_basename() + "_" + safe_name + "_terrain.res"
-		# V22 Phase 4 fix (audit-save-multi-terrain path collision): if
-		# two terrains share a sanitised name (eg. duplicated by Ctrl+D
-		# in the editor), append a numeric suffix so the second one
-		# doesn't overwrite the first's .res file.
-		var collision: int = 0
-		while ResourceLoader.exists(target_path):
-			collision += 1
-			if collision > 64:
-				# Pathological case — give up to avoid an infinite loop.
-				break
-			target_path = (
-				scene_path.get_basename() + "_" + safe_name + "_" + str(collision) + "_terrain.res"
-			)
+# TKT-011: write this terrain's heavy data (height + splatmap) to its
+# companion .res under res://terrain_data/. Scene-INDEPENDENT — works even on
+# an unsaved/untitled scene (the old code bailed if scene_file_path was
+# empty, which is why "it errored every time"). Creates the directory on
+# demand (ResourceSaver does NOT) and binds external_data_path on first save.
+# Returns an Error code (OK on success). Object data is added in PR-2.
+func save_terrain_data() -> int:
+	# Called only from EditorPlugin._save_external_data (editor-time). Kept
+	# guard-free so the save core (dir + data + ResourceSaver) is headless-
+	# testable; runtime never calls this path.
+	# Ensure the data directory exists. make_dir_recursive_absolute returns OK
+	# or ERR_ALREADY_EXISTS — both are fine.
+	var dir: String = TerrainConstants.TERRAIN_DATA_DIR
+	var derr := DirAccess.make_dir_recursive_absolute(dir)
+	if derr != OK and derr != ERR_ALREADY_EXISTS:
+		TerrainDiagnostics.error(TerrainDiagnostics.E_SAVE_RESOURCE_FAILED, [dir, derr])
+		return derr
+	# Bind a deterministic, collision-free path on first save (or if the
+	# stored one is somehow unsafe). Scene-independent.
+	if external_data_path == "" or not _is_safe_external_path(external_data_path):
+		_suppress_external_path_setter = true
+		external_data_path = _make_data_path(dir)
+		_suppress_external_path_setter = false
 
 	# Build the resource. We deliberately COPY the byte arrays via duplicate()
 	# rather than passing the live references; otherwise the resource and
@@ -1302,110 +1248,39 @@ func _externalize_data(val: bool) -> void:
 			data.splatmap_bytes = img.get_data().duplicate()
 			data.splatmap_size = img.get_width()
 
-	# TKT-005 M3: validate the WRITE target the same way C1 validates the
-	# read path. external_data_path can be typed straight into the
-	# inspector, so target_path (which defaults to it) could be
-	# "/etc/x.res" or "res://../../x.res" — without this guard ResourceSaver
-	# would happily write outside the project. C1 closed the read/RCE side;
-	# this closes the symmetric write side.
-	if not _is_safe_external_path(target_path):
-		TerrainDiagnostics.warn(
-			"MT-W15: Refusing to externalize to unsafe path '%s' (must be under res:// or user://, no traversal)." % target_path
-		)
-		call_deferred("_reset_externalize")
-		return
-
-	var err := ResourceSaver.save(data, target_path)
+	var err := ResourceSaver.save(data, external_data_path)
 	if err != OK:
-		TerrainDiagnostics.error(TerrainDiagnostics.E_SAVE_RESOURCE_FAILED, [target_path, err])
-		call_deferred("_reset_externalize")
-		return
-	# Suppress setter cascade — we're recording where we saved to, not
-	# asking for a load (data is already in memory and matches what was
-	# just written to disk).
-	_suppress_external_path_setter = true
-	external_data_path = target_path
-	_suppress_external_path_setter = false
-	# Clear the inline copies so they don't bloat the .tscn. The resource
-	# we just saved is the canonical store; on next scene load, _ready
-	# will repopulate height_data and splatmap_texture_local from it.
-	#
-	# NOTE: we DON'T clear them in memory right now — the running scene
-	# still needs them to render. The clear is purely a serialisation
-	# hint: when the user next saves the .tscn, these properties will be
-	# stored empty and only external_data_path persists. To actually wipe
-	# the in-memory copies and force a fresh load, the user can re-open
-	# the scene.
-	# V21: notify Godot the property usage flags have changed so the
-	# inspector reflects external mode and the serializer (running now,
-	# if this was called from EditorPlugin._save_external_data) re-queries
-	# _validate_property and sees the updated NOSTORE flag.
-	#
-	# We do NOT wipe height_data / splatmap_texture_local in memory.
-	# The running editor session still needs them to render the terrain.
-	# When the .tscn save happens, _validate_property strips STORAGE for
-	# both — so the .tscn ends up small without losing the live state.
-	# On next scene load, _ready → _load_external_data_if_set restores
-	# them from the .res.
-	notify_property_list_changed()
-	call_deferred("_reset_externalize")
+		TerrainDiagnostics.error(TerrainDiagnostics.E_SAVE_RESOURCE_FAILED, [external_data_path, err])
+		return err
+	return OK
 
 
-func _reset_externalize() -> void:
-	click_to_externalize = false
-	notify_property_list_changed()
-
-
-func _inline_data(val: bool) -> void:
-	if not val:
-		return
-	if external_data_path == "":
-		push_warning("MobileTerrain3D: no external_data_path set, nothing to inline.")
-		call_deferred("_reset_inline")
-		return
-	# V21 CRITICAL FIX: confirm the .res file exists BEFORE we clear
-	# external_data_path. Without this guard, if the user inlines while
-	# the .res has been deleted/moved:
-	#   1. _load_external_data_if_set bails out silently (warning only)
-	#   2. external_data_path = "" wipes the only reference we had
-	#   3. height_data stays at whatever was in memory (possibly empty)
-	#   4. Scene save persists blank terrain → silent data loss
-	if not ResourceLoader.exists(external_data_path):
-		push_warning(
-			(
-				"MobileTerrain3D: cannot inline — external .res '%s' not found. Path NOT cleared so you can locate and restore the file."
-				% external_data_path
-			)
+# Build a deterministic, collision-free .res path for this terrain under
+# `dir`, sanitising the node name for filesystem safety ("My Terrain @1" →
+# "terrain_My_Terrain__1.res").
+func _make_data_path(dir: String) -> String:
+	var name_str: String = String(name)
+	var safe_name: String = ""
+	for i in range(name_str.length()):
+		var ch: String = name_str[i]
+		var ok: bool = (
+			(ch >= "a" and ch <= "z")
+			or (ch >= "A" and ch <= "Z")
+			or (ch >= "0" and ch <= "9")
+			or ch == "_"
 		)
-		call_deferred("_reset_inline")
-		return
-	# Load the external resource into the inline @export fields and
-	# clear the path so the .tscn no longer references the .res file.
-	# This is the inverse of externalize — useful when the user decides
-	# the data is small enough to live in the scene after all, or wants
-	# to delete the .res without losing the terrain.
-	_load_external_data_if_set()
-	# Only clear the path AFTER load succeeded and height_data is populated.
-	# We can verify via height_data.size() > 0 since a successful load
-	# always assigns the duplicate'd height array.
-	if height_data.size() == 0:
-		push_warning(
-			"MobileTerrain3D: inline aborted — external load did not populate height_data. Path preserved."
-		)
-		call_deferred("_reset_inline")
-		return
-	# V21: suppress setter cascade — we already loaded the data; clearing
-	# the path is just a mode flip, not a request to re-load (which would
-	# fail because the path is now empty).
-	_suppress_external_path_setter = true
-	external_data_path = ""
-	_suppress_external_path_setter = false
-	call_deferred("_reset_inline")
-
-
-func _reset_inline() -> void:
-	click_to_inline = false
-	notify_property_list_changed()
+		safe_name += ch if ok else "_"
+	if safe_name == "":
+		safe_name = "terrain"
+	var base: String = dir.path_join("terrain_" + safe_name)
+	var candidate: String = base + ".res"
+	var collision: int = 0
+	while ResourceLoader.exists(candidate):
+		collision += 1
+		if collision > 256:
+			break
+		candidate = base + "_" + str(collision) + ".res"
+	return candidate
 
 
 func _load_external_data_if_set() -> void:

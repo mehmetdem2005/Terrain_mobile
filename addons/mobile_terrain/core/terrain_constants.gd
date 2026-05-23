@@ -20,10 +20,12 @@ const MIN_CHUNK_PER_FRAME := 4  # adaptive _process budget lower bound
 # even when MAX_CHUNK_PER_FRAME chunks would individually be too slow.
 const MAX_CHUNK_REBUILD_USEC := 8000
 
-# Storage: TKT-007 removed AUTO_EXTERNALIZE_THRESHOLD. Externalisation is
-# now size-independent — TerrainSaveOrchestrator._should_externalize moves
-# ANY non-empty terrain's data to a .res companion, so terrain data is never
-# baked inline into the .tscn whatever map_size the user picks.
+# Storage: TKT-011 rewrote the save system. Heavy data (height + splatmap +
+# objects) is NEVER serialized into the .tscn — it always lives in a
+# companion .res under TERRAIN_DATA_DIR, referenced by external_data_path.
+# The directory is created on demand (DirAccess.make_dir_recursive) and the
+# save is scene-independent (works even on an unsaved/untitled scene).
+const TERRAIN_DATA_DIR := "res://terrain_data"
 
 # Stroke throttling intervals (seconds between applied dabs).
 const MIN_STATIONARY_INTERVAL := 0.04  # ~25 Hz cap for sculpt/paint
