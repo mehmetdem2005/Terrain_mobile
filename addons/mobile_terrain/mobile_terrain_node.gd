@@ -46,16 +46,14 @@ var splatmap_texture_local: ImageTexture
 @export var asset_meshes: Array[Mesh] = []
 
 @export_category("Gelişmiş PBR Settings")
-@export var texture_scale: float = 1.0:
-	set = _set_tex_scale
-# V21: New PBR controls. These multiply onto the shader output, so they
-# work uniformly across all slots without per-slot UI bloat.
-@export_range(0.0, 2.0) var normal_strength: float = 1.0:
-	set = _set_normal_strength
-@export_range(0.0, 2.0) var roughness_multiplier: float = 1.0:
-	set = _set_roughness_multiplier
-@export_range(0.0, 1.0) var ao_strength: float = 1.0:
-	set = _set_ao_strength
+# TKT-018: PER-SLOT PBR. One value per splatmap channel (0..3): each painted
+# texture gets its own tiling scale / normal strength / roughness / AO. The
+# panel edits the SELECTED paint slot's entry; pushed to the shader's *_arr[4]
+# uniforms via _apply_pbr_per_slot().
+@export var texture_scale: Array[float] = [1.0, 1.0, 1.0, 1.0]
+@export var normal_strength: Array[float] = [1.0, 1.0, 1.0, 1.0]
+@export var roughness_multiplier: Array[float] = [1.0, 1.0, 1.0, 1.0]
+@export var ao_strength: Array[float] = [1.0, 1.0, 1.0, 1.0]
 # V21: Anti-tile variation. 0 = old single-sample tile (cheap, grids
 # visible on small tiling textures). 1 = full variation, doubles
 # albedo texture cost. See _mt_sample_var in TERRAIN_SHADER. Sweet
@@ -501,260 +499,6 @@ func _initialize_splatmap():
 	splatmap_texture_local = ImageTexture.create_from_image(img)
 
 
-## V22: TERRAIN_SHADER moved to shaders/terrain.gdshader. See
-## _setup_default_shader for the load path. Kept here as a fallback
-## inline string so addons enabled without a full project import (e.g.
-## drag-dropped into a fresh project before res:// scan) still get a
-## working shader. The .gdshader file is the source of truth — any edit
-## must mirror to both.
-const TERRAIN_SHADER = """
-shader_type spatial;
-render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_schlick_ggx;
-
-// V21: Full PBR slot system. Each of the 4 splatmap channels controls
-// a complete texture bundle: albedo + normal + roughness + AO. All four
-// blend by the same splatmap weight so they stay visually coherent.
-
-uniform sampler2D splatmap : filter_linear_mipmap, hint_default_black, repeat_disable;
-
-// Albedo (RGB colour, sRGB encoded). hint_default_black means an empty
-// slot contributes nothing to the final colour — so painting a non-zero
-// splatmap weight on an empty slot produces black, which is the correct
-// "this slot has no texture" appearance.
-uniform sampler2D tex_a_0 : source_color, filter_linear_mipmap_anisotropic, hint_default_black;
-uniform sampler2D tex_a_1 : source_color, filter_linear_mipmap_anisotropic, hint_default_black;
-uniform sampler2D tex_a_2 : source_color, filter_linear_mipmap_anisotropic, hint_default_black;
-uniform sampler2D tex_a_3 : source_color, filter_linear_mipmap_anisotropic, hint_default_black;
-
-// Normal maps (tangent-space, RGB encoded with R/G containing X/Y and B
-// reconstructed by Godot). hint_normal makes Godot default to a flat
-// normal (0.5, 0.5, 1.0 → world (0, 0, 1)) for empty slots, so missing
-// normal maps don't tilt the surface.
-uniform sampler2D tex_n_0 : hint_normal, filter_linear_mipmap_anisotropic;
-uniform sampler2D tex_n_1 : hint_normal, filter_linear_mipmap_anisotropic;
-uniform sampler2D tex_n_2 : hint_normal, filter_linear_mipmap_anisotropic;
-uniform sampler2D tex_n_3 : hint_normal, filter_linear_mipmap_anisotropic;
-
-// Roughness (single channel, linear, R = roughness). hint_default_white
-// = full roughness when empty, which renders as matte (not shiny).
-uniform sampler2D tex_r_0 : filter_linear_mipmap_anisotropic, hint_default_white;
-uniform sampler2D tex_r_1 : filter_linear_mipmap_anisotropic, hint_default_white;
-uniform sampler2D tex_r_2 : filter_linear_mipmap_anisotropic, hint_default_white;
-uniform sampler2D tex_r_3 : filter_linear_mipmap_anisotropic, hint_default_white;
-
-// AO (single channel, linear, R = occlusion factor). hint_default_white
-// = no occlusion when empty.
-uniform sampler2D tex_ao_0 : filter_linear_mipmap_anisotropic, hint_default_white;
-uniform sampler2D tex_ao_1 : filter_linear_mipmap_anisotropic, hint_default_white;
-uniform sampler2D tex_ao_2 : filter_linear_mipmap_anisotropic, hint_default_white;
-uniform sampler2D tex_ao_3 : filter_linear_mipmap_anisotropic, hint_default_white;
-
-uniform float tex_scale = 1.0;
-uniform float normal_strength : hint_range(0.0, 2.0) = 1.0;
-uniform float roughness_multiplier : hint_range(0.0, 2.0) = 1.0;
-uniform float ao_strength : hint_range(0.0, 1.0) = 1.0;
-// V21: texture_variation breaks up the obvious grid-tiling pattern that
-// appears when a small albedo (e.g. 1k grass) gets repeated across a
-// 256-unit terrain. At 0.0 the shader does its old single-sample tile
-// (cheap, but grids are visible). At 1.0 it blends a second sample
-// taken with a per-cell pseudo-random UV offset, hiding the seam.
-// One extra texture sample per albedo per fragment — a noticeable hit
-// on very low-end Mobile GPUs, so it defaults to 0 and the user can
-// dial in.
-uniform float texture_variation : hint_range(0.0, 1.0) = 0.0;
-// V21 ANTI-TILE PRO controls. These work together to hide tile seams:
-//
-//   texture_cell_size — world-space units between variation cells. Bigger
-//     cells = larger natural patches before the pattern changes. Smaller
-//     = more variation, but transitions become noticeable as noise.
-//     Default 10 means one "patch" of texture spans ~10×10 world units.
-//
-//   rotation_jitter — 0..1. At 1.0, each cell rotates its UVs by a random
-//     angle in [0, 2π]. Breaks up directional features (grass blades, dirt
-//     streaks) so they don't all point the same way.
-//
-//   triplanar_blend — 0..1. At 0 the shader projects albedo straight down
-//     (XZ plane) — fast, but textures stretch on steep slopes. At 1, the
-//     shader blends three projections (XY, YZ, XZ) weighted by the surface
-//     normal: this is the standard triplanar trick, eliminates stretching
-//     and the perceived "texture slide" during sculpting. 3× the texture
-//     samples per albedo so default to 0; users with the GPU budget can
-//     dial in.
-uniform float texture_cell_size : hint_range(1.0, 50.0) = 10.0;
-uniform float rotation_jitter : hint_range(0.0, 1.0) = 0.0;
-uniform float triplanar_blend : hint_range(0.0, 1.0) = 0.0;
-
-varying vec3 v_world_pos;
-// V21: world-space normal varying for triplanar projection. Linear
-// interpolation across the triangle (the rasterizer does this automatically)
-// gives us a per-fragment normal we then re-normalise in fragment(). The
-// raw NORMAL is mesh-local; we transform with the model matrix's upper
-// 3×3 so non-uniformly-scaled terrain nodes still get a usable direction.
-varying vec3 v_world_normal;
-
-// V21: per-cell hash for the variation sampler. Standard sin-based
-// hash — not cryptographic, but plenty random for visual variation.
-float _mt_hash(vec2 p) {
-	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-}
-
-// V21: rotate a UV around its cell centre by `angle` radians. Used by
-// _mt_sample_var when rotation_jitter > 0 to give each cell a random
-// orientation, killing the directional repetition that betrays small
-// tiles.
-vec2 _mt_rotate_uv_around(vec2 uv, vec2 centre, float angle) {
-	float c = cos(angle);
-	float s = sin(angle);
-	vec2 d = uv - centre;
-	return centre + vec2(c * d.x - s * d.y, s * d.x + c * d.y);
-}
-
-// V21: sample a texture with anti-tile variation: per-cell random UV
-// offset (texture_variation) and per-cell random rotation (rotation_jitter).
-// Cells are texture_cell_size world units wide (after the tex_scale
-// multiplication has already been applied to uv coming in).
-//
-// Falls through to a single texture() call when both controls are 0 so
-// the cost stays close to the old shader for users who opted out.
-vec3 _mt_sample_var(sampler2D s, vec2 uv) {
-	if (texture_variation < 0.001 && rotation_jitter < 0.001) {
-		return texture(s, uv).rgb;
-	}
-	// Cell index in world space. texture_cell_size is in world units;
-	// we recover that by dividing uv by tex_scale (uv came in scaled).
-	// The 0.0001 guard handles tex_scale=0 (would otherwise NaN the
-	// whole shader).
-	vec2 world_uv = uv / max(tex_scale, 0.0001);
-	vec2 cell = floor(world_uv / max(texture_cell_size, 0.5));
-	float h1 = _mt_hash(cell);
-	float h_rot = _mt_hash(cell + vec2(17.0, 31.0));
-
-	vec2 sample_uv = uv;
-	if (rotation_jitter > 0.001) {
-		// Random angle in [0, 2π], jitter-strength-attenuated. At
-		// jitter=0 every cell sits at angle=0 (no rotation, identical
-		// to the input). At jitter=1, the full random angle is applied.
-		float angle = h_rot * 6.28318 * rotation_jitter;
-		// Rotate around the cell centre (in scaled-uv space) so the
-		// rotation pivot moves with the cell — otherwise the rotation
-		// would have a global pivot at the origin and shift the texture
-		// arbitrarily on far-from-origin terrain.
-		vec2 cell_centre_uv = (cell + 0.5) * texture_cell_size * tex_scale;
-		sample_uv = _mt_rotate_uv_around(sample_uv, cell_centre_uv, angle);
-	}
-
-	vec3 base = texture(s, sample_uv).rgb;
-	if (texture_variation < 0.001) return base;
-
-	// Big offset so the second sample reads totally different tile data.
-	vec2 offset = vec2(h1 * 17.3, fract(h1 * 31.7) * 23.1);
-	vec3 alt = texture(s, sample_uv + offset).rgb;
-	float h2 = _mt_hash(floor(world_uv / max(texture_cell_size * 1.7, 0.5)));
-	float blend = smoothstep(0.3, 0.7, h2) * texture_variation;
-	return mix(base, alt, blend);
-}
-
-// V21: triplanar projection — sample the texture from three world-axis
-// planes and blend by the surface normal's component on each axis. This
-// is the standard fix for "texture stretching on cliffs" because a flat-
-// projected texture rasterises infinitely along the direction of the
-// normal's dominant axis. When the user sculpts a steep face into a
-// previously flat patch, the same UVs that worked before suddenly span
-// many world units in screen space → visible "texture slide".
-//
-// Cost: 3 calls to _mt_sample_var instead of 1. Use sparingly via the
-// triplanar_blend uniform: 0 = pure XZ projection (cheap), 1 = full
-// triplanar (clean). Sweet spot is usually 0.3–0.5 — enough to hide
-// vertical-face stretching without paying full triple-sample cost on
-// the 99% of the terrain that's nearly flat.
-vec3 _mt_triplanar(sampler2D s, vec3 wpos) {
-	vec3 n = normalize(v_world_normal);
-	// pow ^4 sharpens the blend — small components don't contribute much,
-	// so on a nearly-flat surface we essentially just use the XZ sample.
-	vec3 w = pow(abs(n), vec3(4.0));
-	w /= max(w.x + w.y + w.z, 0.0001);
-
-	vec3 xz = _mt_sample_var(s, wpos.xz * tex_scale);
-	vec3 xy = _mt_sample_var(s, wpos.xy * tex_scale);
-	vec3 yz = _mt_sample_var(s, wpos.zy * tex_scale);
-	return xz * w.y + yz * w.x + xy * w.z;
-}
-
-// V21: choose between single-projection and triplanar based on the
-// triplanar_blend uniform. When 0 we skip the extra samples entirely,
-// when > 0 we lerp between the XZ projection and full triplanar so
-// the user gets a smooth dial-in.
-vec3 _mt_slot_sample(sampler2D s, vec3 wpos) {
-	vec3 xz = _mt_sample_var(s, wpos.xz * tex_scale);
-	if (triplanar_blend < 0.001) return xz;
-	vec3 tri = _mt_triplanar(s, wpos);
-	return mix(xz, tri, triplanar_blend);
-}
-
-void vertex() {
-	v_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	// mat3(MODEL_MATRIX) instead of MODEL_NORMAL_MATRIX: see the V20
-	// fix in earlier shader history (Mobile renderer compile bug with
-	// MODEL_NORMAL_MATRIX). For uniformly-scaled terrains this gives the
-	// same result; non-uniform scale tilts the normal slightly.
-	v_world_normal = normalize(mat3(MODEL_MATRIX) * NORMAL);
-}
-
-void fragment() {
-	// Normalise the splatmap so the four channel weights sum to 1.0.
-	// Without this, splatmaps painted "additively" (each channel up to
-	// 1.0 independently) would blow out the final colour > 1.0.
-	vec4 blend = texture(splatmap, UV);
-	float total_blend = blend.r + blend.g + blend.b + blend.a;
-	if (total_blend > 0.0001) {
-		blend /= total_blend;
-	} else {
-		// Empty splatmap pixel — default to slot 0 so the user sees
-		// SOMETHING instead of pitch black.
-		blend = vec4(1.0, 0.0, 0.0, 0.0);
-	}
-
-	// === All four maps share ONE sampling path (TKT-010) ===
-	// albedo, normal, roughness AND ao all call _mt_slot_sample so a slot's
-	// maps share variation / rotation jitter / triplanar and stay coherent
-	// when tex_scale / texture_variation / rotation_jitter / triplanar_blend
-	// change. (Previously roughness/ao sampled flat texture(uv) and desynced
-	// from albedo.) Single-channel maps take .r.
-	vec3 c0 = _mt_slot_sample(tex_a_0, v_world_pos);
-	vec3 c1 = _mt_slot_sample(tex_a_1, v_world_pos);
-	vec3 c2 = _mt_slot_sample(tex_a_2, v_world_pos);
-	vec3 c3 = _mt_slot_sample(tex_a_3, v_world_pos);
-	ALBEDO = c0 * blend.r + c1 * blend.g + c2 * blend.b + c3 * blend.a;
-
-	// Normal: linear tangent-space blend (not strict RNM, but fast and fine
-	// for terrain). Same path as albedo so lighting and surface stay in sync
-	// on slopes.
-	vec3 n0 = _mt_slot_sample(tex_n_0, v_world_pos);
-	vec3 n1 = _mt_slot_sample(tex_n_1, v_world_pos);
-	vec3 n2 = _mt_slot_sample(tex_n_2, v_world_pos);
-	vec3 n3 = _mt_slot_sample(tex_n_3, v_world_pos);
-	NORMAL_MAP = n0 * blend.r + n1 * blend.g + n2 * blend.b + n3 * blend.a;
-	NORMAL_MAP_DEPTH = normal_strength;
-
-	// Roughness: scalar blend, multiplied by global multiplier.
-	float r0 = _mt_slot_sample(tex_r_0, v_world_pos).r;
-	float r1 = _mt_slot_sample(tex_r_1, v_world_pos).r;
-	float r2 = _mt_slot_sample(tex_r_2, v_world_pos).r;
-	float r3 = _mt_slot_sample(tex_r_3, v_world_pos).r;
-	ROUGHNESS = clamp((r0 * blend.r + r1 * blend.g + r2 * blend.b + r3 * blend.a) * roughness_multiplier, 0.0, 1.0);
-
-	// AO: scalar blend, lerped against 1.0 by ao_strength.
-	float ao0 = _mt_slot_sample(tex_ao_0, v_world_pos).r;
-	float ao1 = _mt_slot_sample(tex_ao_1, v_world_pos).r;
-	float ao2 = _mt_slot_sample(tex_ao_2, v_world_pos).r;
-	float ao3 = _mt_slot_sample(tex_ao_3, v_world_pos).r;
-	float ao = ao0 * blend.r + ao1 * blend.g + ao2 * blend.b + ao3 * blend.a;
-	AO = mix(1.0, ao, ao_strength);
-	AO_LIGHT_AFFECT = 1.0;
-}
-"""
-
-
 func _setup_default_shader():
 	if terrain_material != null and not (terrain_material is ShaderMaterial):
 		return
@@ -789,8 +533,13 @@ func _setup_default_shader():
 		if loaded is Shader:
 			smat.shader = loaded
 		else:
-			var shader = Shader.new()
-			shader.code = TERRAIN_SHADER
+			# Fallback (addon dropped in before import registered the resource):
+			# read the .gdshader text directly — res:// files are FileAccess-
+			# readable even pre-import, so there is no duplicated inline copy to
+			# keep in sync.
+			var shader := Shader.new()
+			if FileAccess.file_exists(SHADER_PATH):
+				shader.code = FileAccess.get_file_as_string(SHADER_PATH)
 			smat.shader = shader
 	update_shader_textures()
 	# V21: removed `slope_rock_factor` shader parameter set — the new
@@ -804,10 +553,7 @@ func update_shader_textures():
 		return
 	var smat = terrain_material as ShaderMaterial
 	smat.set_shader_parameter("splatmap", splatmap_texture_local)
-	smat.set_shader_parameter("tex_scale", texture_scale)
-	smat.set_shader_parameter("normal_strength", normal_strength)
-	smat.set_shader_parameter("roughness_multiplier", roughness_multiplier)
-	smat.set_shader_parameter("ao_strength", ao_strength)
+	_apply_pbr_per_slot()
 	smat.set_shader_parameter("texture_variation", texture_variation)
 	smat.set_shader_parameter("texture_cell_size", texture_cell_size)
 	smat.set_shader_parameter("rotation_jitter", rotation_jitter)
@@ -880,22 +626,26 @@ func _set_slope_rock(val: float):
 	# No shader uniform to push; the shader doesn't reference this any more.
 
 
-func _set_normal_strength(val: float):
-	normal_strength = val
-	if terrain_material is ShaderMaterial:
-		(terrain_material as ShaderMaterial).set_shader_parameter("normal_strength", val)
+# TKT-018: push the per-slot PBR arrays to the shader's *_arr[4] uniforms.
+# Called from update_shader_textures and from the editor panel after a slider
+# edits a slot's value. Replaces the old per-float setters (props are arrays now).
+func _apply_pbr_per_slot() -> void:
+	if not (terrain_material is ShaderMaterial):
+		return
+	var smat := terrain_material as ShaderMaterial
+	smat.set_shader_parameter("tex_scale_arr", _pbr_arr(texture_scale, 1.0))
+	smat.set_shader_parameter("normal_strength_arr", _pbr_arr(normal_strength, 1.0))
+	smat.set_shader_parameter("roughness_mult_arr", _pbr_arr(roughness_multiplier, 1.0))
+	smat.set_shader_parameter("ao_strength_arr", _pbr_arr(ao_strength, 1.0))
 
 
-func _set_roughness_multiplier(val: float):
-	roughness_multiplier = val
-	if terrain_material is ShaderMaterial:
-		(terrain_material as ShaderMaterial).set_shader_parameter("roughness_multiplier", val)
-
-
-func _set_ao_strength(val: float):
-	ao_strength = val
-	if terrain_material is ShaderMaterial:
-		(terrain_material as ShaderMaterial).set_shader_parameter("ao_strength", val)
+# Coerce a per-slot Array to a length-4 PackedFloat32Array (the shader's array
+# uniform type), padding short/missing arrays with `fallback`.
+func _pbr_arr(src: Array, fallback: float) -> PackedFloat32Array:
+	var out := PackedFloat32Array([fallback, fallback, fallback, fallback])
+	for i in range(mini(4, src.size())):
+		out[i] = float(src[i])
+	return out
 
 
 func _set_texture_variation(val: float):
@@ -1116,15 +866,6 @@ func _set_material(val: Material):
 	# Guarded by the is-ShaderMaterial check inside update_shader_textures
 	# so assigning a StandardMaterial3D or other type is a safe no-op.
 	update_shader_textures()
-
-
-func _set_tex_scale(val: float):
-	texture_scale = val
-	# Set only the one shader param (like the other PBR setters) instead of
-	# rebinding all ~21 params: dragging the panel slider was triggering a full
-	# update_shader_textures() every value-changed tick.
-	if terrain_material is ShaderMaterial:
-		terrain_material.set_shader_parameter("tex_scale", val)
 
 
 func bake_collision():

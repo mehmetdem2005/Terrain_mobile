@@ -36,6 +36,10 @@ var obj_list_vbox: VBoxContainer
 var _setting_sliders: Dictionary = {}  # prop_name -> HSlider
 var _setting_value_labels: Dictionary = {}  # prop_name -> Label
 var _setting_checks: Dictionary = {}  # prop_name -> CheckBox
+# TKT-018: which setting sliders are PER-SLOT (edit the selected paint slot's
+# array entry) vs global; plus the "which slot" label above the PBR sliders.
+var _per_slot_props: Dictionary = {}  # prop_name -> bool
+var _pbr_slot_label: Label
 # V21: track the "+" button so _refresh_manager_ui can disable it
 # when terrain_textures hits the 4-slot splatmap cap (see _add_texture_slot).
 var btn_add_tex: Button
@@ -399,6 +403,8 @@ func _build_main_ui():
 		func(idx):
 			if selected_node:
 				selected_node.current_paint_slot = texture_opt.get_item_id(idx)
+				# TKT-018: re-sync the per-slot PBR sliders to the new slot.
+				_refresh_settings_controls()
 	)
 	texture_opt.hide()
 	toolbar.add_child(texture_opt)
@@ -980,10 +986,16 @@ func _build_settings_section(parent: Control) -> void:
 	title.add_theme_color_override("font_color", Color(0.85, 0.85, 1.0))
 	parent.add_child(title)
 
-	_add_setting_slider(parent, "Doku Ölçeği", "texture_scale", 0.01, 4.0, 0.01)
-	_add_setting_slider(parent, "Normal Gücü", "normal_strength", 0.0, 2.0, 0.01)
-	_add_setting_slider(parent, "Pürüzlülük ×", "roughness_multiplier", 0.0, 2.0, 0.01)
-	_add_setting_slider(parent, "AO Gücü", "ao_strength", 0.0, 1.0, 0.01)
+	# TKT-018: these 4 are PER-SLOT — they edit the SELECTED paint slot's value
+	# (the channel you paint with). The label shows which slot is active.
+	_pbr_slot_label = Label.new()
+	_pbr_slot_label.add_theme_font_size_override("font_size", 10)
+	_pbr_slot_label.add_theme_color_override("font_color", Color(0.55, 0.8, 0.6))
+	parent.add_child(_pbr_slot_label)
+	_add_setting_slider(parent, "Doku Ölçeği", "texture_scale", 0.01, 4.0, 0.01, true)
+	_add_setting_slider(parent, "Normal Gücü", "normal_strength", 0.0, 2.0, 0.01, true)
+	_add_setting_slider(parent, "Pürüzlülük ×", "roughness_multiplier", 0.0, 2.0, 0.01, true)
+	_add_setting_slider(parent, "AO Gücü", "ao_strength", 0.0, 1.0, 0.01, true)
 
 	_add_settings_subheader(parent, "  ─ Detaylandırma (tekrarı kır) ─")
 	_add_setting_slider(parent, "Varyasyon", "texture_variation", 0.0, 1.0, 0.01)
@@ -1009,7 +1021,13 @@ func _add_settings_subheader(parent: Control, text: String) -> void:
 # One labelled slider row bound to node property `prop`. Dragging writes
 # selected_node.set(prop, value), firing the node's setter (and shader update).
 func _add_setting_slider(
-	parent: Control, label_text: String, prop: String, mn: float, mx: float, step: float
+	parent: Control,
+	label_text: String,
+	prop: String,
+	mn: float,
+	mx: float,
+	step: float,
+	per_slot: bool = false
 ) -> void:
 	var row := HBoxContainer.new()
 	var lbl := Label.new()
@@ -1031,12 +1049,29 @@ func _add_setting_slider(
 	slider.value_changed.connect(
 		func(v: float) -> void:
 			val.text = "%.2f" % v
-			if is_instance_valid(selected_node):
+			if not is_instance_valid(selected_node):
+				return
+			if per_slot:
+				# Write into the SELECTED paint slot's array entry, then push.
+				var arr: Array = selected_node.get(prop)
+				var s := _pbr_slot()
+				if s >= 0 and s < arr.size():
+					arr[s] = v
+					selected_node._apply_pbr_per_slot()
+			else:
 				selected_node.set(prop, v)
 	)
 	_setting_sliders[prop] = slider
 	_setting_value_labels[prop] = val
+	_per_slot_props[prop] = per_slot
 	parent.add_child(row)
+
+
+# The paint slot (0..3) the per-slot PBR sliders currently edit.
+func _pbr_slot() -> int:
+	if not is_instance_valid(selected_node):
+		return 0
+	return clampi(int(selected_node.current_paint_slot), 0, 3)
 
 
 func _add_setting_check(parent: Control, label_text: String, prop: String) -> void:
@@ -1056,8 +1091,16 @@ func _add_setting_check(parent: Control, label_text: String, prop: String) -> vo
 func _refresh_settings_controls() -> void:
 	if not is_instance_valid(selected_node):
 		return
+	var slot := _pbr_slot()
+	if _pbr_slot_label != null:
+		_pbr_slot_label.text = "  Seçili slot: %d (boyadığın kanalın ayarları)" % slot
 	for prop: String in _setting_sliders:
-		var v: float = float(selected_node.get(prop))
+		var v: float
+		if _per_slot_props.get(prop, false):
+			var arr: Array = selected_node.get(prop)
+			v = float(arr[slot]) if slot < arr.size() else 1.0
+		else:
+			v = float(selected_node.get(prop))
 		_setting_sliders[prop].set_value_no_signal(v)
 		_setting_value_labels[prop].text = "%.2f" % v
 	for prop: String in _setting_checks:
