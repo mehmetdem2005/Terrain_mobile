@@ -51,29 +51,33 @@ echo "==> 7/12 brush system unit test (TKT-002 C4 regression)"
 godot --headless --script unit_tests/test_brush_system.gd 2>&1 | tee /tmp/brush_system.log
 grep -q "^BRUSH_SYSTEM_TEST_OK" /tmp/brush_system.log
 
-echo "==> 8/12 splatmap system unit test (TKT-003 Phase A.1 extraction)"
+echo "==> 8/14 splatmap system unit test (TKT-003 Phase A.1 extraction)"
 godot --headless --script unit_tests/test_splatmap_system.gd 2>&1 | tee /tmp/splatmap_system.log
 grep -q "^SPLATMAP_SYSTEM_TEST_OK" /tmp/splatmap_system.log
 
-echo "==> 9/12 heightmap io unit test (TKT-003 Phase A.2 extraction)"
+echo "==> 9/14 heightmap io unit test (TKT-003 Phase A.2 extraction)"
 godot --headless --script unit_tests/test_heightmap_io.gd 2>&1 | tee /tmp/heightmap_io.log
 grep -q "^HEIGHTMAP_IO_TEST_OK" /tmp/heightmap_io.log
 
-echo "==> 10/12 foliage system unit test (TKT-003 Phase A.3 extraction)"
+echo "==> 10/14 foliage system unit test (TKT-003 Phase A.3 extraction)"
 godot --headless --script unit_tests/test_foliage_system.gd 2>&1 | tee /tmp/foliage_system.log
 grep -q "^FOLIAGE_SYSTEM_TEST_OK" /tmp/foliage_system.log
 
-echo "==> 11/13 chunk renderer unit test (TKT-003 Phase A.4 extraction)"
+echo "==> 11/14 chunk renderer unit test (TKT-003 Phase A.4 extraction)"
 godot --headless --script unit_tests/test_chunk_renderer.gd 2>&1 | tee /tmp/chunk_renderer.log
 grep -q "^CHUNK_RENDERER_TEST_OK" /tmp/chunk_renderer.log
 
-echo "==> 12/13 HIGH fixes wave 1 (TKT-004 H5 brush LUT + H8 paint-slot clamp)"
+echo "==> 12/14 HIGH fixes wave 1 (TKT-004 H5 brush LUT + H8 paint-slot clamp)"
 godot --headless --script unit_tests/test_high_fixes_wave1.gd 2>&1 | tee /tmp/high_wave1.log
 grep -q "^HIGH_WAVE1_TEST_OK" /tmp/high_wave1.log
 
-echo "==> 13/13 user-reported fixes (TKT-006 scene-embed threshold + dead slope setting)"
+echo "==> 13/14 user-reported fixes (TKT-006/007 externalize + map_size adapt + dead slope)"
 godot --headless --script unit_tests/test_user_fixes.gd 2>&1 | tee /tmp/user_fixes.log
 grep -q "^USER_FIXES_TEST_OK" /tmp/user_fixes.log
+
+echo "==> 14/14 undo recorder unit test (TKT-009 Phase B.2 extraction)"
+godot --headless --script unit_tests/test_undo_recorder.gd 2>&1 | tee /tmp/undo_recorder.log
+grep -q "^UNDO_RECORDER_TEST_OK" /tmp/undo_recorder.log
 
 echo
 echo "ALL TESTS PASSED"
