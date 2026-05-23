@@ -99,7 +99,7 @@ grep -i "error\|warning" editor-log.txt
 
 ### Parse all plugin scripts
 ```bash
-find addons/<plugin>/ -name '*.gd' -exec godot --headless --script {} --check-only \;
+find addons/<plugin>/ -name '*.gd' -exec godot --headless --check-only {} \;
 ```
 
 ### Plugin enable/disable via Project Settings

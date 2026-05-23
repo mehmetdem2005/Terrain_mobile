@@ -6,12 +6,26 @@ The studio's institutional memory. Grows over time as tickets close and lessons 
 
 | File | Purpose | Maintained by |
 |------|---------|---------------|
+| **`index.md`** | **The active knowledge spine — every lesson registered here (v2.2)** | **Studio Knowledge Curator** |
+| `patterns/<tag>.md` | Synthesis documents when a tag has 3+ lessons (v2.2) | Studio Knowledge Curator |
 | `godot-pitfalls.md` | Specific Godot 4.6.2 gotchas encountered in real tickets | Studio Knowledge Curator + API Verification Specialist |
 | `recurring-defects.md` | Defect patterns seen across multiple tickets | Studio Knowledge Curator + Postmortem Lead |
 | `architectural-decision-records/` | ADRs from ARB outputs | Architecture Decision Recorder |
 | `risks.md` | Open risk register | Risk Officer |
 | `overrides.md` | Honesty Auditor overrides (permanent record) | Studio Head + Audit Trail Officer |
 | `role-experiments.md` | Instantiated and dismissed roles | Chief Talent Officer |
+
+## The Knowledge Loop (v2.2)
+
+`index.md` is the live spine. Per `references/knowledge-loop-protocol.md`:
+
+1. **Phase 1.B (every L/XL ticket)**: Tech Director consults `index.md`, produces `relevant-lessons.md` in the ticket — Gate L43
+2. **Phase 1.G (every L/XL ticket)**: Curator harvests 1-5 lessons → `lessons.md` in the ticket — Gate L41
+3. **Phase 1.G**: Curator appends new lessons to `index.md` — Gate L42
+4. **Phase 1.G**: Honesty Auditor cross-checks defects vs index → repeat-mistake alarm if matched — Gate L44
+5. **Every 10 tickets or XL boundary**: Curator runs index hygiene (merge duplicates, promote patterns to syntheses, retire stale lessons)
+
+Without the index actively populated, the studio is amnesiac. With it, the studio compounds.
 
 ## How knowledge grows
 
