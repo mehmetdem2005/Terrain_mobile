@@ -29,6 +29,13 @@ var _syncing_brush_controls: bool = false
 var asset_manager_panel: PanelContainer
 var tex_list_vbox: VBoxContainer
 var obj_list_vbox: VBoxContainer
+# TKT-015: "Gelişmiş Ayarlar" panel section. Controls are built once in
+# _build_settings_section and their values synced from the selected node in
+# _refresh_settings_controls. Keyed by node property name so changing a control
+# routes through the node's existing setter (which pushes it to the shader).
+var _setting_sliders: Dictionary = {}  # prop_name -> HSlider
+var _setting_value_labels: Dictionary = {}  # prop_name -> Label
+var _setting_checks: Dictionary = {}  # prop_name -> CheckBox
 # V21: track the "+" button so _refresh_manager_ui can disable it
 # when terrain_textures hits the 4-slot splatmap cap (see _add_texture_slot).
 var btn_add_tex: Button
@@ -894,9 +901,18 @@ func _build_asset_manager_ui():
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	main_vbox.add_child(scroll)
 
+	# TKT-015: settings + asset columns share one scrollable column, so the
+	# advanced sliders sit above the texture/object slots and scroll together.
+	var content_vbox := VBoxContainer.new()
+	content_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(content_vbox)
+
+	_build_settings_section(content_vbox)
+	content_vbox.add_child(HSeparator.new())
+
 	var hbox = HBoxContainer.new()
 	hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(hbox)
+	content_vbox.add_child(hbox)
 
 	var tex_vbox = VBoxContainer.new()
 	tex_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -948,11 +964,103 @@ func _build_asset_manager_ui():
 			"MobileTerrain3D: editor main screen unavailable; asset manager will reparent on first open (TKT-002 C7)."
 		)
 	asset_manager_panel.position = Vector2(20, 80)
-	# V21: bigger height — each slot now has 7 picker rows (Albedo,
-	# Normal, Roughness, AO + extra-label + Height, Metallic, Emission)
-	# vs the V20 single-row layout. 560×620 keeps two full slots visible
-	# at a time on tablets without scrolling.
-	asset_manager_panel.custom_minimum_size = Vector2(560, 620)
+	# Each slot has 4 active picker rows (Albedo, Normal, Roughness, AO); the
+	# advanced-settings section sits above and the whole content scrolls.
+	asset_manager_panel.custom_minimum_size = Vector2(560, 640)
+
+
+# TKT-015: advanced-settings section — exposes the shader/PBR + object knobs
+# that previously lived only in the Inspector ("settings don't work / no
+# detailing in the panel"). Each control writes back through the node property
+# (set), so the node's existing setters push the value to the live shader.
+func _build_settings_section(parent: Control) -> void:
+	var title := Label.new()
+	title.text = "Gelişmiş Ayarlar"
+	title.add_theme_color_override("font_color", Color(0.85, 0.85, 1.0))
+	parent.add_child(title)
+
+	_add_setting_slider(parent, "Doku Ölçeği", "texture_scale", 0.01, 4.0, 0.01)
+	_add_setting_slider(parent, "Normal Gücü", "normal_strength", 0.0, 2.0, 0.01)
+	_add_setting_slider(parent, "Pürüzlülük ×", "roughness_multiplier", 0.0, 2.0, 0.01)
+	_add_setting_slider(parent, "AO Gücü", "ao_strength", 0.0, 1.0, 0.01)
+
+	_add_settings_subheader(parent, "  ─ Detaylandırma (tekrarı kır) ─")
+	_add_setting_slider(parent, "Varyasyon", "texture_variation", 0.0, 1.0, 0.01)
+	_add_setting_slider(parent, "Varyasyon Hücre", "texture_cell_size", 1.0, 50.0, 0.5)
+	_add_setting_slider(parent, "Rotasyon Jitter", "rotation_jitter", 0.0, 1.0, 0.01)
+	_add_setting_slider(parent, "Triplanar (eğim)", "triplanar_blend", 0.0, 1.0, 0.01)
+
+	_add_settings_subheader(parent, "  ─ Obje Yerleştirme ─")
+	_add_setting_slider(parent, "Aralık", "object_spacing", 0.1, 50.0, 0.1)
+	_add_setting_slider(parent, "Ölçek", "object_scale", 0.01, 10.0, 0.01)
+	_add_setting_check(parent, "Eğime yatır", "object_align_to_normal")
+	_add_setting_check(parent, "Rastgele dönüş", "object_random_yaw")
+
+
+func _add_settings_subheader(parent: Control, text: String) -> void:
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.add_theme_color_override("font_color", Color(0.6, 0.6, 0.65))
+	lbl.add_theme_font_size_override("font_size", 10)
+	parent.add_child(lbl)
+
+
+# One labelled slider row bound to node property `prop`. Dragging writes
+# selected_node.set(prop, value), firing the node's setter (and shader update).
+func _add_setting_slider(
+	parent: Control, label_text: String, prop: String, mn: float, mx: float, step: float
+) -> void:
+	var row := HBoxContainer.new()
+	var lbl := Label.new()
+	lbl.text = label_text
+	lbl.custom_minimum_size = Vector2(130, 0)
+	lbl.add_theme_color_override("font_color", Color(0.7, 0.7, 0.75))
+	row.add_child(lbl)
+	var slider := HSlider.new()
+	slider.min_value = mn
+	slider.max_value = mx
+	slider.step = step
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(slider)
+	var val := Label.new()
+	val.custom_minimum_size = Vector2(46, 0)
+	val.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(val)
+	slider.value_changed.connect(
+		func(v: float) -> void:
+			val.text = "%.2f" % v
+			if is_instance_valid(selected_node):
+				selected_node.set(prop, v)
+	)
+	_setting_sliders[prop] = slider
+	_setting_value_labels[prop] = val
+	parent.add_child(row)
+
+
+func _add_setting_check(parent: Control, label_text: String, prop: String) -> void:
+	var cb := CheckBox.new()
+	cb.text = label_text
+	cb.toggled.connect(
+		func(pressed: bool) -> void:
+			if is_instance_valid(selected_node):
+				selected_node.set(prop, pressed)
+	)
+	_setting_checks[prop] = cb
+	parent.add_child(cb)
+
+
+# Sync settings controls to the selected node's current values without firing
+# signals (so syncing never writes back). Called on every panel refresh.
+func _refresh_settings_controls() -> void:
+	if not is_instance_valid(selected_node):
+		return
+	for prop: String in _setting_sliders:
+		var v: float = float(selected_node.get(prop))
+		_setting_sliders[prop].set_value_no_signal(v)
+		_setting_value_labels[prop].text = "%.2f" % v
+	for prop: String in _setting_checks:
+		_setting_checks[prop].set_pressed_no_signal(bool(selected_node.get(prop)))
 
 
 func _toggle_asset_manager():
@@ -966,6 +1074,7 @@ func _toggle_asset_manager():
 func _refresh_manager_ui():
 	if not selected_node:
 		return
+	_refresh_settings_controls()
 	for child in tex_list_vbox.get_children():
 		child.queue_free()
 	for child in obj_list_vbox.get_children():
@@ -1034,26 +1143,12 @@ func _refresh_manager_ui():
 			slot_vbox, "Roughness", selected_node.terrain_roughness, i, _on_roughness_changed
 		)
 		_build_pbr_picker_row(slot_vbox, "AO", selected_node.terrain_ao, i, _on_ao_changed)
-		# V21: storage-only slots. The default shader doesn't sample
-		# these, so the user pays nothing in rendering cost by leaving
-		# them empty. They exist so projects with full PBR sets can
-		# park their _disp/_metal/_emit textures here and reference
-		# them from a custom shader. Visually separated from the four
-		# active maps with a subtle label.
-		var extra_label := Label.new()
-		extra_label.text = "  ─ Ekstra (Shader'a bağlı değil — saklama için) ─"
-		extra_label.add_theme_color_override("font_color", Color(0.55, 0.55, 0.6))
-		extra_label.add_theme_font_size_override("font_size", 10)
-		slot_vbox.add_child(extra_label)
-		_build_pbr_picker_row(
-			slot_vbox, "Height", selected_node.terrain_height, i, _on_height_changed
-		)
-		_build_pbr_picker_row(
-			slot_vbox, "Metallic", selected_node.terrain_metallic, i, _on_metallic_changed
-		)
-		_build_pbr_picker_row(
-			slot_vbox, "Emission", selected_node.terrain_emission, i, _on_emission_changed
-		)
+		# Height/Metallic/Emission are intentionally NOT exposed here: the mobile
+		# shader has no uniforms for them (the 17-sampler budget is full with
+		# splatmap + 16 albedo/normal/rough/AO), so panel pickers for them only
+		# confused users ("assigned a PNG, nothing happened"). The @export arrays
+		# stay on the node so advanced users can wire a custom shader via the
+		# Inspector.
 
 		tex_list_vbox.add_child(slot_panel)
 		# Small gap between slot panels
