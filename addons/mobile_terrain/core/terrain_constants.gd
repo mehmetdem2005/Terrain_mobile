@@ -8,7 +8,7 @@ extends RefCounted
 # RefCounted instance.
 
 # Chunk lifecycle thresholds.
-const SYNC_BUILD_CHUNK_LIMIT := 256  # > this many chunks → deferred build
+const SYNC_BUILD_CHUNK_LIMIT := 64  # > this many chunks → deferred build (avoid editor freeze)
 const SYNC_REBUILD_CHUNK_LIMIT := 256  # force_update_all switch point
 const MAX_CHUNK_COUNT := 1024  # auto-bump chunk_size trigger
 const MAX_CHUNK_PER_FRAME := 64  # adaptive _process budget upper bound

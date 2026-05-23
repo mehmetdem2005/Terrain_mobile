@@ -86,6 +86,15 @@ func _test_align_to_normal() -> void:
 	_check(up.is_equal_approx(n), "up aligns to normal (got %s want %s)" % [up, n])
 
 
+# TKT-016: a centre-pivot mesh (AABB min-y = -2) is lifted by 2 so its bottom
+# sits on the surface — fixes objects sinking half below the terrain.
+func _test_surface_offset() -> void:
+	var tf := Placer.build_instance_transform(
+		Vector3.ZERO, Vector3.UP, 1.0, false, false, Transform3D.IDENTITY, -2.0
+	)
+	_check(tf.origin.is_equal_approx(Vector3(0, 2, 0)), "surface offset lift (got %s)" % tf.origin)
+
+
 func _test_should_place() -> void:
 	_check(
 		Placer.should_place(Vector3.INF, Vector3(1, 1, 1), 2.0), "first placement always allowed"
