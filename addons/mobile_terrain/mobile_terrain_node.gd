@@ -360,6 +360,16 @@ func _validate_property(property: Dictionary) -> void:
 	# them and there's nothing to gate.
 	if property.name == "slope_rock_factor":
 		property.usage = PROPERTY_USAGE_STORAGE
+	elif property.name == "terrain_material":
+		# The ShaderMaterial is DERIVED state: _ready rebuilds it every load
+		# via _setup_default_shader + update_shader_textures (textures come
+		# from the @export arrays, the splatmap from the .res). Storing it
+		# embeds the live map_size² splatmap ImageTexture into the .tscn — a
+		# ~22 MB blob at 1280² that triggers Godot's "scene large on disk"
+		# warning. Drop STORAGE (keep EDITOR so the inspector still shows it)
+		# so the scene never carries the material or its splatmap. Old scenes
+		# that already embed it shed the blob on the next save.
+		property.usage = property.usage & ~PROPERTY_USAGE_STORAGE
 
 
 func _ready() -> void:

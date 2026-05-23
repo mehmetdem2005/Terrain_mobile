@@ -67,6 +67,10 @@ echo "==> object .res roundtrip (path-less mesh persistence)"
 godot --headless --script integration_tests/object_roundtrip.gd 2>&1 | tee /tmp/object_roundtrip.log
 grep -q "^OBJECT_ROUNDTRIP_OK" /tmp/object_roundtrip.log
 
+echo "==> scene no-embed (material/splatmap stays out of the .tscn)"
+godot --headless --script integration_tests/scene_no_embed.gd 2>&1 | tee /tmp/scene_no_embed.log
+grep -q "^SCENE_NO_EMBED_OK" /tmp/scene_no_embed.log
+
 echo "==> 11/14 chunk renderer unit test (TKT-003 Phase A.4 extraction)"
 godot --headless --script unit_tests/test_chunk_renderer.gd 2>&1 | tee /tmp/chunk_renderer.log
 grep -q "^CHUNK_RENDERER_TEST_OK" /tmp/chunk_renderer.log
