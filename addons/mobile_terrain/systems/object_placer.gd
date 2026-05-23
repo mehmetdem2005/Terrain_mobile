@@ -26,6 +26,13 @@ extends RefCounted
 # the GPU (a cause of the editor crash on heavy object painting).
 const MAX_INSTANCES_PER_MESH := 8192
 
+# Upper clamp on per-instance scale. `object_scale` comes from an
+# @export_range that only constrains the inspector — direct/scripted
+# assignment is NOT bounded — so a stray huge value could otherwise produce a
+# kilometre-wide instance (degenerate basis, GPU stall). Matches the node's
+# export upper bound.
+const MAX_OBJECT_SCALE := 100.0
+
 
 # Human-readable Scene-dock name fragment for a mesh. Tolerates path-less
 # meshes (inspector primitives) by falling back to resource_name, then the
@@ -95,6 +102,7 @@ static func build_instance_transform(
 ) -> Transform3D:
 	var basis := _orientation_basis(surface_normal, align_to_normal, random_yaw)
 	var s: float = object_scale if object_scale > 0.0 else 1.0
+	s = minf(s, MAX_OBJECT_SCALE)
 	basis = basis.scaled(Vector3(s, s, s))
 	# Sit the mesh ON the surface: shift the origin up by the mesh's bottom (its
 	# AABB min-y) along the instance up-axis, so a centre-pivot mesh (sphere/box)

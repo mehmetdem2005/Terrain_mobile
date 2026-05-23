@@ -17,8 +17,10 @@ func _init() -> void:
 	_test_origin_is_world()
 	_test_world_to_local()
 	_test_scale_applied()
+	_test_scale_clamped()
 	_test_no_nan_zero_normal()
 	_test_align_to_normal()
+	_test_surface_offset()
 	_test_should_place()
 	_test_mesh_label()
 	if _failed == 0:
@@ -61,6 +63,17 @@ func _test_scale_applied() -> void:
 	)
 	var s := tf.basis.get_scale()
 	_check(s.is_equal_approx(Vector3(0.5, 0.5, 0.5)), "scale 0.5 (got %s)" % s)
+
+
+# C1 hardening: an out-of-range object_scale is clamped to MAX_OBJECT_SCALE so a
+# stray scripted/inspector value can't produce a kilometre-wide instance.
+func _test_scale_clamped() -> void:
+	var tf := Placer.build_instance_transform(
+		Vector3.ZERO, Vector3.UP, 1.0e6, false, false, Transform3D.IDENTITY
+	)
+	var s := tf.basis.get_scale()
+	var cap: float = Placer.MAX_OBJECT_SCALE
+	_check(s.is_equal_approx(Vector3(cap, cap, cap)), "scale clamped to %s (got %s)" % [cap, s])
 
 
 # A degenerate (zero) normal must never produce a NaN basis — that was the
