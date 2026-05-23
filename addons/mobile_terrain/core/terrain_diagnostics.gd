@@ -32,6 +32,7 @@ const W_RESTORE_INVALID := "MT-W10: Restore target no longer valid; skipping."
 const W_INLINE_NO_PATH := "MT-W11: external_data_path boş, inline edilecek bir şey yok."
 const W_INLINE_RES_MISSING := "MT-W12: External .res '%s' bulunamadı. Yol korundu — dosyayı geri koyup tekrar dene."
 const W_INLINE_LOAD_FAILED := "MT-W13: External load height_data'yı dolduramadı; inline iptal edildi."
+const W_TEXTURE_SLOTS_UNDERFLOW := "MT-W14: terrain_textures (%d) < %d kanal; eksik slotlar boş (gri) görünür."
 
 
 static func error(code_template: String, args: Array = []) -> void:

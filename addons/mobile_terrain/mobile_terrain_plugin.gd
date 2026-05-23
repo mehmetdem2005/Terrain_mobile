@@ -1280,6 +1280,21 @@ func _sync_pbr_array_sizes() -> void:
 	selected_node.terrain_height.resize(n)
 	selected_node.terrain_metallic.resize(n)
 	selected_node.terrain_emission.resize(n)
+	# TKT-018 FIX: keep the per-slot PBR scalar arrays in lockstep too — they
+	# were omitted originally, unlike the texture arrays above. Pad with the
+	# neutral 1.0 default so a freshly-added slot has working sliders.
+	while selected_node.texture_scale.size() < n:
+		selected_node.texture_scale.append(1.0)
+	while selected_node.normal_strength.size() < n:
+		selected_node.normal_strength.append(1.0)
+	while selected_node.roughness_multiplier.size() < n:
+		selected_node.roughness_multiplier.append(1.0)
+	while selected_node.ao_strength.size() < n:
+		selected_node.ao_strength.append(1.0)
+	selected_node.texture_scale.resize(n)
+	selected_node.normal_strength.resize(n)
+	selected_node.roughness_multiplier.resize(n)
+	selected_node.ao_strength.resize(n)
 
 
 func _add_texture_slot():

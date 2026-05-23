@@ -223,6 +223,9 @@ var _splatmap_stroke_image: Image = null
 var _active_stroke: bool = false
 var _stroke_revision: int = 0
 var _splatmap_stroke_revision: int = -1
+# C3: one-shot-per-stroke guard so the "fewer textures than channels" warning
+# (MT-W14) in _paint_splatmap fires at most once per stroke, not per dab.
+var _warned_paint_slots_underflow: bool = false
 # Pending resize values queued by setters when called during a stroke
 # or during initialize_terrain. 0 means "no pending change".
 var _deferred_map_size: int = 0
@@ -377,7 +380,7 @@ func _ready() -> void:
 		height_data.resize(map_size * map_size)
 		height_data.fill(0.0)
 
-	while terrain_textures.size() < 4:
+	while terrain_textures.size() < TerrainConstants.SPLATMAP_SLOT_COUNT:
 		terrain_textures.append(null)
 
 	# V21: PBR array migration. Old V19/V20 scenes only saved
@@ -406,6 +409,23 @@ func _ready() -> void:
 	terrain_height.resize(terrain_textures.size())
 	terrain_metallic.resize(terrain_textures.size())
 	terrain_emission.resize(terrain_textures.size())
+	# TKT-018 FIX: the per-slot PBR SCALAR arrays were originally left out of
+	# the migration above (only the texture arrays were synced). Sync them to
+	# the albedo count too — padding with the neutral 1.0 default — so every
+	# slot is indexable without bounds checks and the per-slot sliders work on
+	# scenes saved with short scalar arrays. Mirrors _sync_pbr_array_sizes().
+	while texture_scale.size() < terrain_textures.size():
+		texture_scale.append(1.0)
+	while normal_strength.size() < terrain_textures.size():
+		normal_strength.append(1.0)
+	while roughness_multiplier.size() < terrain_textures.size():
+		roughness_multiplier.append(1.0)
+	while ao_strength.size() < terrain_textures.size():
+		ao_strength.append(1.0)
+	texture_scale.resize(terrain_textures.size())
+	normal_strength.resize(terrain_textures.size())
+	roughness_multiplier.resize(terrain_textures.size())
+	ao_strength.resize(terrain_textures.size())
 
 	_initialize_splatmap()
 	_setup_default_shader()
@@ -567,7 +587,7 @@ func update_shader_textures():
 	# concrete blank texture both clears stale state AND respects the
 	# shader's hint_default_* fallback semantics on backends where those
 	# work.
-	for i in range(4):
+	for i in range(TerrainConstants.SPLATMAP_SLOT_COUNT):
 		var ta: Texture2D = terrain_textures[i] if i < terrain_textures.size() else null
 		var tn: Texture2D = terrain_normal[i] if i < terrain_normal.size() else null
 		var tr: Texture2D = terrain_roughness[i] if i < terrain_roughness.size() else null
@@ -642,8 +662,15 @@ func _apply_pbr_per_slot() -> void:
 # Coerce a per-slot Array to a length-4 PackedFloat32Array (the shader's array
 # uniform type), padding short/missing arrays with `fallback`.
 func _pbr_arr(src: Array, fallback: float) -> PackedFloat32Array:
-	var out := PackedFloat32Array([fallback, fallback, fallback, fallback])
-	for i in range(mini(4, src.size())):
+	var n: int = TerrainConstants.SPLATMAP_SLOT_COUNT
+	if src.size() > n:
+		push_warning(
+			"[MobileTerrain3D] _pbr_arr: %d slots > %d shader channels; extra dropped." % [src.size(), n]
+		)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	out.fill(fallback)
+	for i in range(mini(n, src.size())):
 		out[i] = float(src[i])
 	return out
 
@@ -1615,6 +1642,8 @@ func start_stroke():
 	last_sculpt_pos = Vector3.INF
 	# V20 FIX (notice #2): also reset the object-placement gate.
 	last_placement_pos = Vector3.INF
+	# C3: re-arm the per-stroke "fewer textures than channels" warning.
+	_warned_paint_slots_underflow = false
 	# V22 FIX (audit-chunk-resize-during-stroke): mark active so map_size
 	# / chunk_size setters can defer their destructive rebuild until the
 	# stroke ends. Bumped on every start so consecutive strokes see a new
@@ -1838,9 +1867,23 @@ func _apply_brush_single(hit_point: Vector3):
 func _paint_splatmap(cx: float, cz: float, radius: float, strength: float):
 	# V22: explicit zero-based range guard; warns on slot 5+ instead of
 	# silently doing nothing (RGBA8 splatmap only has 4 channels).
-	if not (0 <= current_paint_slot and current_paint_slot < 4):
+	if not (0 <= current_paint_slot and current_paint_slot < TerrainConstants.SPLATMAP_SLOT_COUNT):
 		TerrainDiagnostics.warn(TerrainDiagnostics.E_PAINT_SLOT_OOB, [current_paint_slot])
 		return
+	# C3 hardening: terrain_textures is padded to SPLATMAP_SLOT_COUNT in _ready,
+	# so fewer textures than channels "can't happen" — but if a corrupt/edited
+	# scene slips through, painting still works (the splatmap is independent of
+	# the texture count) yet the under-filled slots render blank. Warn once per
+	# stroke rather than spamming per dab.
+	if (
+		terrain_textures.size() < TerrainConstants.SPLATMAP_SLOT_COUNT
+		and not _warned_paint_slots_underflow
+	):
+		_warned_paint_slots_underflow = true
+		TerrainDiagnostics.warn(
+			TerrainDiagnostics.W_TEXTURE_SLOTS_UNDERFLOW,
+			[terrain_textures.size(), TerrainConstants.SPLATMAP_SLOT_COUNT]
+		)
 	# V20 FIX (#14): use the stroke-cached image when available; otherwise
 	# fall back to a fresh `get_image()` so scripted/ad-hoc paint calls
 	# outside a stroke still work.
