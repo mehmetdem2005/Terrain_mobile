@@ -8,42 +8,19 @@ extends Node3D
 	set = _set_chunk_size
 @export var terrain_material: Material:
 	set = _set_material
-# V21 EXTERNAL STORAGE: when set, height_data and splatmap are loaded
-# from this external .res file instead of being inlined into the .tscn.
-# Use the "Externalize / Re-inline" inspector buttons to migrate between
-# the two storage modes. Inline (default) is convenient for small maps —
-# everything in one file, no extra dependency. External pays off above
-# ~512×512 where the inline data balloons the .tscn into multi-megabyte
-# text and editor save/load slows down noticeably.
-#
-# When this field is non-empty, the inline height_data / splatmap_texture_local
-# values below are IGNORED at load time and overwritten from the resource.
-# So toggling between modes is safe — no data is silently lost.
+# Path to this terrain's companion .res under res://terrain_data/, bound
+# automatically on first save (save_terrain_data). height_data and the splatmap
+# are loaded from it; the heavy data is NEVER inlined into the .tscn anymore
+# (see the note below), so the .res is the single source of truth.
 @export_file("*.res") var external_data_path: String = "":
 	set = _set_external_data_path
-# V21: external storage gating.
-#
-# These two fields hold the heavy terrain data. Whether they get
-# serialized into the .tscn file is controlled dynamically by
-# _validate_property() based on whether external_data_path is set.
-#
-# We use @export (not plain var) so the property is GUARANTEED to be in
-# Godot's property list with PROPERTY_USAGE_DEFAULT. _validate_property
-# then runs on every property iteration and CAN MODIFY the usage flags
-# in place. Modifying flags on a known-existing @export property is the
-# documented-supported pattern; trying to add brand-new properties via
-# _get_property_list while also having a plain var of the same name
-# leads to double-listing in some Godot versions (issue #87636).
-#
-# When external_data_path is non-empty, _validate_property strips
-# PROPERTY_USAGE_STORAGE so save() skips these fields. The data stays
-# in memory (rendering still works); only what Godot writes to disk changes.
-#
-# TKT-011: heavy data is NEVER serialized into the .tscn. height_data and
-# splatmap_texture_local are PLAIN (non-@export) vars now — the scene only
-# persists external_data_path, and the data lives in a companion .res under
-# res://terrain_data/ (see save_terrain_data / load_terrain_data). This
-# deletes the old NOSTORE + pack/restore dance that kept failing to save.
+# Heavy terrain data. These are PLAIN (non-@export) vars, so Godot never
+# serializes them into the .tscn — the scene only stores external_data_path and
+# the bytes live in the companion .res (save_terrain_data /
+# _load_external_data_if_set). The splatmap also rides on terrain_material as a
+# shader parameter, which is why terrain_material's STORAGE is stripped in
+# _validate_property (otherwise the .tscn would re-embed the splatmap image —
+# the 22 MB "scene large on disk" bug).
 var height_data: PackedFloat32Array
 var splatmap_texture_local: ImageTexture
 
@@ -116,7 +93,8 @@ var current_tool: int = 0:
 # refresh race, script, scene load) rather than silently skipping a dab.
 var current_paint_slot: int = 0:
 	set = _set_current_paint_slot
-var current_object_slot: int = 0
+var current_object_slot: int = 0:
+	set = _set_current_object_slot
 var brush_shape: int = 0
 var brush_radius: float = 8.0:
 	set = _set_brush_radius
@@ -146,6 +124,12 @@ func _set_current_tool(val: int) -> void:
 
 func _set_current_paint_slot(val: int) -> void:
 	current_paint_slot = clampi(val, 0, 3)
+
+
+func _set_current_object_slot(val: int) -> void:
+	# Clamp negatives; the upper bound is dynamic (asset_meshes resizes) and is
+	# enforced at the placement call site (apply_brush_stroke_slope).
+	current_object_slot = maxi(0, val)
 
 
 # V21: default lowered from 0.5 to 0.2. With the rate-limit cap at 25 Hz,
@@ -329,7 +313,12 @@ func _set_external_data_path(val: String) -> void:
 		_load_external_data_if_set()
 		_suppress_external_path_setter = false
 		notify_property_list_changed()
-		if Engine.is_editor_hint():
+		# Skip the rebuild while a stroke is in flight: this direct path has no
+		# deferral, and re-entering initialize_terrain mid-stroke would corrupt
+		# it (the map_size cascade inside _load_external_data_if_set already
+		# defers its own rebuild while _active_stroke is set). end_stroke replays
+		# any deferred map_size/chunk_size change, restoring a consistent state.
+		if Engine.is_editor_hint() and not _active_stroke:
 			# Rebuild visuals from the freshly-loaded data.
 			initialize_terrain()
 			update_shader_textures()
@@ -1349,12 +1338,23 @@ func _load_external_data_if_set() -> void:
 	# external resource's data, sized to match data.map_size), the
 	# subsequent map_size change sees a consistent state.
 	height_data = data.height_data.duplicate()
-	if data.splatmap_bytes.size() > 0 and data.splatmap_size > 0:
+	# Validate the splatmap blob like height_data above — a truncated or corrupt
+	# .res must be rejected, not handed to create_from_data (which errors or
+	# yields garbage). RGBA8 = 4 bytes per cell.
+	var expected_splat: int = data.splatmap_size * data.splatmap_size * 4
+	if data.splatmap_size > 0 and data.splatmap_bytes.size() == expected_splat:
 		var img := Image.create_from_data(
 			data.splatmap_size, data.splatmap_size, false, Image.FORMAT_RGBA8, data.splatmap_bytes
 		)
 		splatmap_texture_local = ImageTexture.create_from_image(img)
 		splatmap_data = data.splatmap_bytes.duplicate()
+	elif data.splatmap_bytes.size() > 0:
+		push_warning(
+			(
+				"MobileTerrain3D: '%s' splatmap blob is %d bytes, expected %d; skipping splatmap."
+				% [external_data_path, data.splatmap_bytes.size(), expected_splat]
+			)
+		)
 	# Defensive size check: if the user changed map_size in the inspector
 	# but the .res holds different dimensions, trust the .res (since it's
 	# the canonical store) and update map_size to match.
@@ -1859,7 +1859,7 @@ func get_intersection_raymarch_persistent(camera: Camera3D, screen_pos: Vector2)
 	# V22: delegated to TerrainRaymarchSystem so the algorithm can be
 	# unit-tested without spinning up the whole terrain node.
 	return TerrainRaymarchSystem.intersect(
-		camera, screen_pos, height_data, map_size, global_position
+		camera, screen_pos, height_data, map_size, global_transform
 	)
 
 
@@ -1983,7 +1983,11 @@ func apply_brush_stroke_slope(hit_point: Vector3, hit_normal: Vector3):
 
 
 func _apply_brush_single(hit_point: Vector3):
-	var local_pos = hit_point - global_position
+	# to_local applies the FULL inverse transform (rotation + scale), not just
+	# translation, so brush cells stay aligned with the rendered surface even
+	# when the terrain node is rotated/scaled. Identity transform → same as the
+	# old `hit_point - global_position`.
+	var local_pos := to_local(hit_point)
 	# V21 STRENGTH SCALING NOTE
 	#
 	# Each tool below applies its own internal multiplier on top of the
