@@ -25,19 +25,43 @@ extends RefCounted
 static func route(p, camera: Camera3D, event: InputEvent) -> int:
 	if not p.selected_node:
 		return EditorPlugin.AFTER_GUI_INPUT_PASS
-	# V21: cache camera + mouse from EVERY event (before the brush_enabled
+	# V21: cache camera + pointer from EVERY event (before the brush_enabled
 	# gate) so brush-toggle-on can re-raycast without touching EditorInterface
 	# (whose API shifted across Godot 4.x). Captured even with brush off so
 	# toggling back on picks up wherever the camera ended up.
 	p._cached_camera = camera
 	if event is InputEventMouse:
 		p._cached_mouse_pos = (event as InputEventMouse).position
+	elif event is InputEventScreenTouch:
+		p._cached_mouse_pos = (event as InputEventScreenTouch).position
+	elif event is InputEventScreenDrag:
+		p._cached_mouse_pos = (event as InputEventScreenDrag).position
 	# V21: master toggle gate. PASS lets the editor camera controller see the
 	# event so zoom/pan/orbit keep working; stroke/placement input is dropped.
 	# Cursor isn't hidden here (the toggle handler did that) and MouseMotion
 	# isn't processed, so the cursor doesn't flicker while orbiting.
 	if not p.brush_enabled:
 		return EditorPlugin.AFTER_GUI_INPUT_PASS
+
+	# --- Touch path (mobile / Android editor) ----------------------------------
+	# The viewport-input handler only ever saw mouse events, so on a touchscreen
+	# the brush never started a stroke: emulate-mouse-from-touch dragged the
+	# cursor (motion) but the finger-down didn't reach us as a clean left press,
+	# so is_sculpting stayed false and sculpt/paint/object placement all no-oped
+	# ("the object just follows my finger and never drops"). Handle the single
+	# primary finger (index 0) directly as the stroke; multi-finger gestures fall
+	# through to PASS so the editor still pans/zooms/orbits with two fingers.
+	if event is InputEventScreenTouch and event.index == 0:
+		p._touch_active = event.pressed
+		if event.pressed:
+			return _on_left_press(p, camera, event)
+		return _on_left_release(p)
+	if event is InputEventScreenDrag and event.index == 0:
+		return _on_motion(p, camera, event)
+	# While a finger stroke is live, swallow the emulated-from-touch mouse events
+	# so a single tap doesn't place twice (touch path above owns the stroke).
+	if p._touch_active and event is InputEventMouse:
+		return EditorPlugin.AFTER_GUI_INPUT_STOP
 
 	if _is_left_press(event):
 		return _on_left_press(p, camera, event)
