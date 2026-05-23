@@ -10,12 +10,11 @@ extends SceneTree
 #      keeping STORAGE so old scenes still deserialize.
 
 const TerrainNode := preload("res://addons/mobile_terrain/mobile_terrain_node.gd")
-const Orch := preload("res://addons/mobile_terrain/editor/save_orchestrator.gd")
 
 
 func _init() -> void:
 	var failures: Array[String] = []
-	_run("externalize_is_size_independent", _test_externalize_any_size, failures)
+	_run("save_roundtrip_to_terrain_data", _test_save_roundtrip, failures)
 	_run("map_size_adapts_to_any_value", _test_map_size_adapts, failures)
 	_run("slope_rock_factor_hidden_from_inspector", _test_slope_hidden, failures)
 	_run("slope_rock_factor_keeps_storage", _test_slope_storage, failures)
@@ -60,27 +59,48 @@ func _test_map_size_adapts() -> String:
 	return ""
 
 
-func _test_externalize_any_size() -> String:
-	# TKT-007: externalisation must be size-INDEPENDENT so terrain data is
-	# never embedded in the .tscn whatever map_size the user picks.
-	# Tiny terrain, no external path yet → must externalise.
-	if not Orch._should_externalize(16, false, false):
-		return "tiny terrain (16 cells / 4²) must externalise"
-	# Default 256² → must externalise.
-	if not Orch._should_externalize(65536, false, false):
-		return "256² terrain must externalise"
-	# Large 1024² → must externalise.
-	if not Orch._should_externalize(1048576, false, false):
-		return "1024² terrain must externalise"
-	# Empty terrain → nothing to write.
-	if Orch._should_externalize(0, false, false):
-		return "empty terrain must not externalise"
-	# Already external with a present .res → don't rewrite every save.
-	if Orch._should_externalize(65536, true, false):
-		return "already-external terrain must not re-externalise"
-	# Already external but .res went missing → must re-externalise.
-	if not Orch._should_externalize(65536, true, true):
-		return "external terrain with a missing .res must re-externalise"
+func _test_save_roundtrip() -> String:
+	# TKT-011: save_terrain_data must (a) create res://terrain_data/, (b) bind
+	# external_data_path there, (c) write the .res, (d) be scene-INDEPENDENT
+	# (node not in any saved scene here), and load must restore byte-for-byte.
+	var node: Node3D = TerrainNode.new()
+	# Use a multiple of chunk_size so _align_to_chunks doesn't clamp/bump it
+	# (a sub-chunk_size map_size would be raised, desyncing height_data length
+	# from map_size² and failing the load schema check).
+	var ms: int = node.chunk_size * 2
+	node.map_size = ms
+	ms = node.map_size  # post-align (unchanged for a chunk_size multiple)
+	# map_size setter skips initialize_terrain headlessly, so fill manually.
+	var heights := PackedFloat32Array()
+	heights.resize(ms * ms)
+	for i in range(heights.size()):
+		heights[i] = float(i) * 0.5
+	node.height_data = heights
+	var err: int = node.save_terrain_data()
+	if err != OK:
+		node.free()
+		return "save_terrain_data failed with error %d" % err
+	var path: String = node.external_data_path
+	if not path.begins_with("res://terrain_data/"):
+		node.free()
+		return "external_data_path must bind under res://terrain_data/, got '%s'" % path
+	if not ResourceLoader.exists(path):
+		node.free()
+		return ".res was not written at %s" % path
+	# Load roundtrip into a fresh node.
+	var node2: Node3D = TerrainNode.new()
+	node2.external_data_path = path
+	node2._load_external_data_if_set()
+	var ok_height: bool = node2.height_data == node.height_data
+	var ok_size: bool = node2.map_size == ms
+	node.free()
+	node2.free()
+	# Cleanup the test artifact.
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	if not ok_height:
+		return "loaded height_data does not match saved data"
+	if not ok_size:
+		return "loaded map_size mismatch"
 	return ""
 
 

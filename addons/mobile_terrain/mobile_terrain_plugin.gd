@@ -1766,29 +1766,26 @@ func _handles(object: Object) -> bool:
 	return object is TerrainNode
 
 
-# V21: scene-save hook for auto-externalising large heightmaps.
+# Scene-save hook: write each terrain's companion .res.
 #
-# This is the documented EditorPlugin virtual method the editor calls
-# right before serialising scenes. Unlike NOTIFICATION_EDITOR_PRE_SAVE
-# (which only fires on Resource-derived objects, not Node instances —
-# confirmed by Godot engine source code), _save_external_data on the
-# plugin DOES fire on scene save and is exposed for exactly this use
-# case: writing companion external files alongside the .tscn.
+# This is the documented EditorPlugin virtual the editor calls right before
+# serialising scenes. Unlike NOTIFICATION_EDITOR_PRE_SAVE (which only fires
+# on Resource-derived objects, not Node instances — confirmed via Godot
+# engine source), _save_external_data DOES fire on scene save and is exposed
+# for exactly this: writing companion files alongside the .tscn.
 #
-# What we do here: walk every MobileTerrain3D in the currently edited
-# scene tree and, if its heightmap is big enough AND not already
-# externalised, migrate it to a .res file. The node's _externalize_data
-# method handles path resolution, ResourceSaver.save, and the
-# notify_property_list_changed call that flips _get_property_list into
-# external mode for the imminent .tscn serialisation.
-#
-# Returns OK regardless of individual node outcomes — a single failed
-# externalisation (e.g. unsaved scene) shouldn't block the .tscn save;
-# the node just stays inline for that pass.
+# TKT-011: walk every MobileTerrain3D in the edited scene and call
+# save_terrain_data(), which writes its height+splatmap to a .res under
+# res://terrain_data/. Heavy data isn't @export'd, so the .tscn never carries
+# it — no pack/restore. On failure we push_error loudly (below) instead of
+# silently swallowing it.
 func _save_external_data() -> void:
-	# V22: delegates to TerrainSaveOrchestrator (Plan B). All the .res
-	# externalisation + PackedScene.pack + ResourceSaver.save logic lives
-	# in editor/save_orchestrator.gd so it can be unit-tested in isolation.
+	# TKT-011: ask each terrain to write its companion .res under
+	# res://terrain_data/. Heavy data is no longer @export'd, so the .tscn
+	# never carries it — no pack/restore dance. Scene-INDEPENDENT (works on
+	# an unsaved scene). On failure we push_error LOUDLY instead of silently
+	# swallowing the return code (the old behaviour the user hit as "errors
+	# every time" with no visible cause).
 	var ei := get_editor_interface()
 	if ei == null:
 		return
@@ -1797,33 +1794,11 @@ func _save_external_data() -> void:
 		return
 	if _save_orchestrator == null:
 		_save_orchestrator = TerrainSaveOrchestrator.new()
-	_save_orchestrator.save_with_externalized_terrains(root, self)
-
-
-# Restore callback invoked deferred by TerrainSaveOrchestrator so the
-# small .tscn ResourceSaver flush completes before live state mutates.
-func _terrain_restore_callback(backups: Array) -> void:
-	for entry in backups:
-		if not entry.has("node"):
-			continue
-		var node = entry["node"]
-		if not is_instance_valid(node):
-			continue
-		# TKT-004 H12: cast to TerrainNode and call the restore hooks
-		# directly. The old has_method("force_update_all") string dispatch
-		# silently no-op'd if either method were renamed — a diagnostic
-		# regression where undo/redo would quietly stop refreshing the
-		# mesh. A typed call makes a rename a hard parse error instead, and
-		# the `is` check keeps it safe for any non-terrain node in backups.
-		if not (node is TerrainNode):
-			continue
-		var terrain := node as TerrainNode
-		if entry.has("height_data"):
-			terrain.height_data = entry["height_data"]
-		if entry.has("splatmap_texture_local"):
-			terrain.splatmap_texture_local = entry["splatmap_texture_local"]
-		terrain.force_update_all()
-		terrain.force_refresh_splatmap()
+	var err: int = _save_orchestrator.save_all_terrains(root)
+	if err != OK:
+		push_error(
+			"MobileTerrain3D: terrain data save failed (error %d). See Output for the failing path." % err
+		)
 
 
 func _edit(object: Object) -> void:
