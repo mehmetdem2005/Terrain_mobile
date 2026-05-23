@@ -963,10 +963,11 @@ func _build_asset_manager_ui():
 		push_warning(
 			"MobileTerrain3D: editor main screen unavailable; asset manager will reparent on first open (TKT-002 C7)."
 		)
-	asset_manager_panel.position = Vector2(20, 80)
-	# Each slot has 4 active picker rows (Albedo, Normal, Roughness, AO); the
-	# advanced-settings section sits above and the whole content scrolls.
-	asset_manager_panel.custom_minimum_size = Vector2(560, 640)
+	asset_manager_panel.position = Vector2(12, 52)
+	# Compact + tucked top-left so it does NOT cover the whole viewport — the
+	# user must SEE the terrain react while dragging a setting slider. Smaller
+	# than before (was 560x640); everything scrolls inside this box.
+	asset_manager_panel.custom_minimum_size = Vector2(430, 360)
 
 
 # TKT-015: advanced-settings section — exposes the shader/PBR + object knobs
