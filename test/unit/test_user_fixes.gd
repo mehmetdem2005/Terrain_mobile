@@ -20,8 +20,8 @@ func _init() -> void:
 	_run("slope_rock_factor_hidden_from_inspector", _test_slope_hidden, failures)
 	_run("slope_rock_factor_keeps_storage", _test_slope_storage, failures)
 	_run("active_pbr_props_stay_visible", _test_pbr_visible, failures)
-	_run("albedo_triplanar_runs_on_mobile", _test_albedo_triplanar_mobile, failures)
-	_run("normal_sample_kept_single_proj", _test_normal_sample_exists, failures)
+	_run("slot_sample_no_mobile_gate", _test_slot_sample_no_mobile_gate, failures)
+	_run("all_slot_maps_share_sample_path", _test_all_maps_use_slot_sample, failures)
 
 	if failures.is_empty():
 		print("USER_FIXES_TEST_OK")
@@ -127,11 +127,11 @@ func _test_pbr_visible() -> String:
 const SHADER_PATH := "res://addons/mobile_terrain/shaders/terrain.gdshader"
 
 
-func _albedo_sample_body() -> String:
+func _slot_sample_body() -> String:
 	var code := FileAccess.get_file_as_string(SHADER_PATH)
 	if code.is_empty():
 		return ""
-	var start := code.find("vec3 _mt_albedo_sample")
+	var start := code.find("vec3 _mt_slot_sample")
 	if start < 0:
 		return ""
 	var brace := code.find("{", start)
@@ -141,28 +141,33 @@ func _albedo_sample_body() -> String:
 	return code.substr(brace, close - brace)
 
 
-func _test_albedo_triplanar_mobile() -> String:
-	# The bug was `if (mobile_quality || triplanar_blend < 0.001) return xz;`
-	# in _mt_albedo_sample — that fully bypassed triplanar on Forward Mobile,
-	# so the slider did nothing and slopes kept stretching. Albedo must NOT
-	# gate triplanar on mobile_quality. (Normal maps may; see next test.)
-	var body := _albedo_sample_body()
+func _test_slot_sample_no_mobile_gate() -> String:
+	# TKT-006 + TKT-010: triplanar must NOT gate on mobile_quality — that
+	# bypass made the triplanar slider do nothing on Forward Mobile and
+	# slopes kept stretching ("eğimde kayma"). TKT-010 removed mobile_quality
+	# entirely; the single _mt_slot_sample path must not reference it.
+	var body := _slot_sample_body()
 	if body == "":
-		return "could not isolate _mt_albedo_sample in terrain.gdshader"
-	# Match the actual gate STATEMENT, not the word in an explanatory comment
-	# (the fix's comment legitimately mentions the old `mobile_quality ||`).
-	if "if (mobile_quality" in body:
-		return "albedo triplanar must not gate on mobile_quality (re-introduces eğimde kayma)"
+		return "could not isolate _mt_slot_sample in terrain.gdshader"
+	if "mobile_quality" in body:
+		return "slot sampling must not gate on mobile_quality (re-introduces eğimde kayma)"
 	return ""
 
 
-func _test_normal_sample_exists() -> String:
-	# Normals keep single-projection on mobile to bound the read count, so a
-	# dedicated _mt_normal_sample (which DOES check mobile_quality) must exist
-	# and be distinct from the albedo path.
+func _test_all_maps_use_slot_sample() -> String:
+	# TKT-010: every map of a slot (albedo, normal, roughness, ao) must go
+	# through the SAME _mt_slot_sample path so changing tiling/variation/
+	# triplanar keeps them coherent. Roughness/AO previously sampled flat
+	# texture(tex_r_/tex_ao_, uv) and desynced; that must be gone, and the
+	# old separate _mt_normal_sample must no longer exist.
 	var code := FileAccess.get_file_as_string(SHADER_PATH)
 	if code.is_empty():
 		return "could not read terrain.gdshader"
-	if not ("_mt_normal_sample" in code):
-		return "_mt_normal_sample must exist (mobile keeps normal maps single-projection)"
+	if "_mt_normal_sample" in code:
+		return "_mt_normal_sample must be gone (normal now shares _mt_slot_sample)"
+	if "texture(tex_r_" in code or "texture(tex_ao_" in code:
+		return "roughness/ao must use _mt_slot_sample, not flat texture(uv)"
+	for sampler in ["tex_a_0", "tex_n_0", "tex_r_0", "tex_ao_0"]:
+		if not ("_mt_slot_sample(" + sampler in code):
+			return "%s must be sampled via _mt_slot_sample" % sampler
 	return ""

@@ -41,12 +41,6 @@ uniform float texture_variation : hint_range(0.0, 1.0) = 0.0;
 uniform float texture_cell_size : hint_range(1.0, 50.0) = 10.0;
 uniform float rotation_jitter : hint_range(0.0, 1.0) = 0.0;
 uniform float triplanar_blend : hint_range(0.0, 1.0) = 0.0;
-// V23 (TKT-002 C6): allow the plugin to force planar-only sampling on
-// Forward Mobile / low-end devices. Triplanar takes 3x texture reads per
-// albedo+normal slot; with 4 slots that's 24 samples/fragment, blowing
-// past mid-tier mobile GPU texture-unit budgets (Adreno 650/Mali-G68).
-// The plugin sets mobile_quality=true on Forward Mobile renderers.
-uniform bool mobile_quality = false;
 
 varying vec3 v_world_pos;
 varying vec3 v_world_normal;
@@ -99,29 +93,20 @@ vec3 _mt_triplanar(sampler2D s, vec3 wpos) {
 	return xz * w.y + yz * w.x + xy * w.z;
 }
 
-vec3 _mt_albedo_sample(sampler2D s, vec3 wpos) {
+// TKT-010: the SINGLE sampling path for every map of a slot — albedo,
+// normal, roughness AND ao. Previously roughness/ao bypassed this and
+// sampled flat (and normal skipped triplanar on mobile), so changing
+// tex_scale / texture_variation / rotation_jitter / triplanar_blend
+// desynced a slot's maps from one another. Routing all four through one
+// function keeps them coherent.
+//
+// Triplanar runs on mobile too (TKT-006): it adds texture READS gated by
+// triplanar_blend (0 = no extra reads), not sampler UNITS, so the slope-
+// stretch fix is preserved. variation=0 & jitter=0 makes _mt_sample_var
+// early-out to a single read, so default settings cost exactly as before.
+vec3 _mt_slot_sample(sampler2D s, vec3 wpos) {
 	vec3 xz = _mt_sample_var(s, wpos.xz * tex_scale);
-	// TKT-006: triplanar now runs on mobile too. The old `mobile_quality ||`
-	// bypass (TKT-002 C6) made the triplanar_blend slider do NOTHING on the
-	// Forward Mobile renderer, so slopes kept stretching no matter what the
-	// user set — the reported "eğimde kayma". Triplanar adds texture READS
-	// (fill-rate), not sampler UNITS, and is already gated by triplanar_blend
-	// (0 = no extra reads), so albedo — where the stretch is most visible —
-	// can afford it on mobile. Normal maps stay single-projection on mobile
-	// via _mt_normal_sample below to keep the per-fragment read count in
-	// check (C6's legitimate fill-rate concern).
 	if (triplanar_blend < 0.001) return xz;
-	vec3 tri = _mt_triplanar(s, wpos);
-	return mix(xz, tri, triplanar_blend);
-}
-
-// Like _mt_albedo_sample but keeps single (XZ) projection on mobile_quality.
-// Slope stretching on a normal map is far less perceptible than on albedo,
-// so skipping triplanar here halves the mobile triplanar read count while
-// the visible albedo fix is preserved. Desktop gets full triplanar on both.
-vec3 _mt_normal_sample(sampler2D s, vec3 wpos) {
-	vec3 xz = _mt_sample_var(s, wpos.xz * tex_scale);
-	if (mobile_quality || triplanar_blend < 0.001) return xz;
 	vec3 tri = _mt_triplanar(s, wpos);
 	return mix(xz, tri, triplanar_blend);
 }
@@ -140,31 +125,32 @@ void fragment() {
 		blend = vec4(1.0, 0.0, 0.0, 0.0);
 	}
 
-	vec2 uv = v_world_pos.xz * tex_scale;
-
-	vec3 c0 = _mt_albedo_sample(tex_a_0, v_world_pos);
-	vec3 c1 = _mt_albedo_sample(tex_a_1, v_world_pos);
-	vec3 c2 = _mt_albedo_sample(tex_a_2, v_world_pos);
-	vec3 c3 = _mt_albedo_sample(tex_a_3, v_world_pos);
+	vec3 c0 = _mt_slot_sample(tex_a_0, v_world_pos);
+	vec3 c1 = _mt_slot_sample(tex_a_1, v_world_pos);
+	vec3 c2 = _mt_slot_sample(tex_a_2, v_world_pos);
+	vec3 c3 = _mt_slot_sample(tex_a_3, v_world_pos);
 	ALBEDO = c0 * blend.r + c1 * blend.g + c2 * blend.b + c3 * blend.a;
 
-	vec3 n0 = _mt_normal_sample(tex_n_0, v_world_pos);
-	vec3 n1 = _mt_normal_sample(tex_n_1, v_world_pos);
-	vec3 n2 = _mt_normal_sample(tex_n_2, v_world_pos);
-	vec3 n3 = _mt_normal_sample(tex_n_3, v_world_pos);
+	vec3 n0 = _mt_slot_sample(tex_n_0, v_world_pos);
+	vec3 n1 = _mt_slot_sample(tex_n_1, v_world_pos);
+	vec3 n2 = _mt_slot_sample(tex_n_2, v_world_pos);
+	vec3 n3 = _mt_slot_sample(tex_n_3, v_world_pos);
 	NORMAL_MAP = n0 * blend.r + n1 * blend.g + n2 * blend.b + n3 * blend.a;
 	NORMAL_MAP_DEPTH = normal_strength;
 
-	float r0 = texture(tex_r_0, uv).r;
-	float r1 = texture(tex_r_1, uv).r;
-	float r2 = texture(tex_r_2, uv).r;
-	float r3 = texture(tex_r_3, uv).r;
+	// TKT-010: roughness/ao now route through _mt_slot_sample too (was flat
+	// texture(uv)), so all four maps of a slot share variation/jitter/
+	// triplanar and stay coherent. Single-channel maps take .r.
+	float r0 = _mt_slot_sample(tex_r_0, v_world_pos).r;
+	float r1 = _mt_slot_sample(tex_r_1, v_world_pos).r;
+	float r2 = _mt_slot_sample(tex_r_2, v_world_pos).r;
+	float r3 = _mt_slot_sample(tex_r_3, v_world_pos).r;
 	ROUGHNESS = clamp((r0 * blend.r + r1 * blend.g + r2 * blend.b + r3 * blend.a) * roughness_multiplier, 0.0, 1.0);
 
-	float ao0 = texture(tex_ao_0, uv).r;
-	float ao1 = texture(tex_ao_1, uv).r;
-	float ao2 = texture(tex_ao_2, uv).r;
-	float ao3 = texture(tex_ao_3, uv).r;
+	float ao0 = _mt_slot_sample(tex_ao_0, v_world_pos).r;
+	float ao1 = _mt_slot_sample(tex_ao_1, v_world_pos).r;
+	float ao2 = _mt_slot_sample(tex_ao_2, v_world_pos).r;
+	float ao3 = _mt_slot_sample(tex_ao_3, v_world_pos).r;
 	float ao = ao0 * blend.r + ao1 * blend.g + ao2 * blend.b + ao3 * blend.a;
 	AO = mix(1.0, ao, ao_strength);
 	AO_LIGHT_AFFECT = 1.0;
