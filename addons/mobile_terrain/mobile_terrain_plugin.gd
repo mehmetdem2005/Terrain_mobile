@@ -227,7 +227,8 @@ func _on_brush_applied(hit_point: Vector3) -> void:
 
 # V20 FIX: Object placement signal handler.
 # Called by the node whenever a foliage instance is placed during a stroke.
-# We just append; the commit happens on mouse release in _commit_placement_undo.
+# We just append; the commit happens on mouse release via
+# TerrainUndoRecorder.commit_placement_undo (Phase B.2).
 func _on_foliage_placed(mmi: MultiMeshInstance3D, index: int, tf: Transform3D) -> void:
 	if not is_instance_valid(mmi):
 		return
@@ -242,49 +243,6 @@ func _on_foliage_placed(mmi: MultiMeshInstance3D, index: int, tf: Transform3D) -
 
 # V20 FIX: Build the combined undo action for an object-placement stroke.
 # Called from the mouse-up branch of _forward_3d_gui_input.
-func _commit_placement_undo() -> void:
-	if placement_records.is_empty():
-		return
-	undo_redo.create_action("Terrain Place Objects")
-
-	# Phase 1: instance_count delta for every multimesh that was touched.
-	# Filter out any multimeshes that have been freed since (e.g. the user
-	# removed an asset slot mid-stroke, triggering garbage_collect_multimeshes).
-	# Including a freed reference would crash on undo execution.
-	for mmi in placement_initial_counts.keys():
-		if not is_instance_valid(mmi) or mmi.multimesh == null:
-			continue
-		var mm: MultiMesh = mmi.multimesh
-		var initial: int = placement_initial_counts[mmi]
-		var final: int = mm.instance_count
-		if final == initial:
-			continue  # Defensive: nothing actually changed
-		# Order: count up first (do), then transforms; count down (undo)
-		# alone is enough — transforms past the new count aren't rendered.
-		undo_redo.add_do_property(mm, "instance_count", final)
-		undo_redo.add_undo_property(mm, "instance_count", initial)
-
-	# Phase 2: re-set every transform on redo. MultiMesh may discard data
-	# past instance_count when the buffer shrinks, so we cannot trust the
-	# new transforms to survive an undo→redo round trip without rewriting.
-	# Note: we deliberately don't add undo entries here. The undo path
-	# only needs to shrink the count; whatever stale data sits past the
-	# count is invisible and harmless.
-	for placement in placement_records:
-		var mmi: MultiMeshInstance3D = placement.mmi
-		if not is_instance_valid(mmi) or mmi.multimesh == null:
-			continue
-		undo_redo.add_do_method(
-			mmi.multimesh, "set_instance_transform", placement.index, placement.transform
-		)
-
-	undo_redo.commit_action(false)
-	# Don't clear placement_records here — mouse-down does it for every
-	# new stroke. Clearing here would risk wiping data if commit_action
-	# triggered a synchronous side-effect that somehow re-emitted (paranoid
-	# but cheap to be defensive about).
-
-
 # V20 FIX (#15): lazy snapshot. Called immediately before each brush
 # application within a stroke. Populates the appropriate backup on
 # first invocation; subsequent calls are cheap no-ops (just a size
@@ -2028,53 +1986,32 @@ func _finalize_active_stroke() -> void:
 	if selected_node == null:
 		return
 	selected_node.end_stroke()
-	if selected_node.current_tool == 7 and splatmap_backup.size() > 0:
-		undo_redo.create_action("Terrain Paint")
-		undo_redo.add_do_property(
-			selected_node, "splatmap_data", selected_node.splatmap_data.duplicate()
+	# Phase B.2: undo action construction lives in editor/undo_recorder.gd.
+	# This function keeps the orchestration: end the stroke, dispatch to the
+	# right builder by tool, then the H2/H3 backup wipe below.
+	var tool: int = selected_node.current_tool
+	if tool == 7:  # Paint
+		TerrainUndoRecorder.commit_paint_undo(undo_redo, selected_node, splatmap_backup)
+	elif tool != 8:  # All sculpt tools (0..6); 8 is Object
+		TerrainUndoRecorder.commit_sculpt_undo(undo_redo, selected_node, heightmap_backup)
+	elif not placement_records.is_empty():  # tool == 8, Object
+		TerrainUndoRecorder.commit_placement_undo(
+			undo_redo, placement_records, placement_initial_counts
 		)
-		undo_redo.add_undo_property(selected_node, "splatmap_data", splatmap_backup)
-		undo_redo.add_do_method(selected_node, "force_refresh_splatmap")
-		undo_redo.add_undo_method(selected_node, "force_refresh_splatmap")
-		undo_redo.commit_action(false)
-		splatmap_backup = PackedByteArray()
-	elif (
-		selected_node.current_tool != 7
-		and selected_node.current_tool != 8
-		and heightmap_backup.size() > 0
-	):
-		undo_redo.create_action("Terrain Sculpt")
-		undo_redo.add_do_property(
-			selected_node, "height_data", selected_node.height_data.duplicate()
-		)
-		undo_redo.add_undo_property(selected_node, "height_data", heightmap_backup)
-		undo_redo.add_do_method(selected_node, "force_update_all")
-		undo_redo.add_undo_method(selected_node, "force_update_all")
-		undo_redo.commit_action(false)
-		heightmap_backup = PackedFloat32Array()
-	elif selected_node.current_tool == 8 and not placement_records.is_empty():
-		_commit_placement_undo()
-		# V21: clear records after commit. _commit_placement_undo intentionally
-		# doesn't clear so re-entrant commits stay safe, but at the finaliser
-		# level (one call per stroke end) it's correct to wipe. Without this,
-		# a tool-switch-from-Object would leave stale records, and a later
-		# non-Object finalise (e.g. another tool change) would skip the
-		# placement_records branch but the records would still be alive in
-		# memory until the next mouse_down clears them — minor memory waste,
-		# but more importantly a footgun if we ever add a code path that
-		# reads `placement_records` outside the stroke lifecycle.
+		# Clear records after commit. The builder intentionally doesn't clear
+		# (re-entrant safety); at the finaliser level (one call per stroke
+		# end) it's correct to wipe so stale records can't leak past the
+		# stroke lifecycle.
 		placement_records.clear()
 		placement_initial_counts.clear()
 
 	# TKT-004 H2/H3: belt-and-braces — guarantee NO heightmap/splatmap
-	# backup survives a stroke finalisation, not just the active tool's.
-	# The if/elif above only clears the committed tool's backup. A backup
-	# left over from a previous tool (H2: switch sculpt->paint mid-session)
-	# or a previous terrain (H3: select a different terrain mid-stroke)
-	# would otherwise persist and make the NEXT stroke's undo rewind the
-	# wrong tool/terrain's state. Idempotent in the normal case — the
-	# active branch already emptied its own backup, so this just re-empties
-	# the other (already-empty) one.
+	# backup survives a stroke finalisation, not just the active tool's. A
+	# backup left over from a previous tool (H2: switch sculpt->paint) or a
+	# previous terrain (H3: select a different terrain mid-stroke) would
+	# otherwise make the NEXT stroke's undo rewind the wrong state.
+	# Idempotent: the committed builder consumed its own backup; this
+	# re-empties the other (already-empty) one.
 	splatmap_backup = PackedByteArray()
 	heightmap_backup = PackedFloat32Array()
 
