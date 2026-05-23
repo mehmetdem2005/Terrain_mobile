@@ -57,10 +57,10 @@ func _process(_delta: float) -> bool:
 		node2._restore_object_slots(slots)
 
 		# Assert the roundtrip under the real RenderingServer.
-		var ok := node2.multimesh_instances.has(mesh_path)
+		var ok := node2.multimesh_instances.has(box)
 		var detail := "slot missing"
 		if ok:
-			var mm2: MultiMesh = node2.multimesh_instances[mesh_path].multimesh
+			var mm2: MultiMesh = node2.multimesh_instances[box].multimesh
 			if mm2.instance_count != placed.size():
 				ok = false
 				detail = "count %d != %d" % [mm2.instance_count, placed.size()]

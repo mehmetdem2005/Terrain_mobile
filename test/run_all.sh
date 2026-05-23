@@ -59,9 +59,13 @@ echo "==> 9/14 heightmap io unit test (TKT-003 Phase A.2 extraction)"
 godot --headless --script unit_tests/test_heightmap_io.gd 2>&1 | tee /tmp/heightmap_io.log
 grep -q "^HEIGHTMAP_IO_TEST_OK" /tmp/heightmap_io.log
 
-echo "==> 10/14 foliage system unit test (TKT-003 Phase A.3 extraction)"
-godot --headless --script unit_tests/test_foliage_system.gd 2>&1 | tee /tmp/foliage_system.log
-grep -q "^FOLIAGE_SYSTEM_TEST_OK" /tmp/foliage_system.log
+echo "==> object placer unit test (transform + spacing logic)"
+godot --headless --script unit_tests/test_object_placer.gd 2>&1 | tee /tmp/object_placer.log
+grep -q "^OBJECT_PLACER_TEST_OK" /tmp/object_placer.log
+
+echo "==> object .res roundtrip (path-less mesh persistence)"
+godot --headless --script integration_tests/object_roundtrip.gd 2>&1 | tee /tmp/object_roundtrip.log
+grep -q "^OBJECT_ROUNDTRIP_OK" /tmp/object_roundtrip.log
 
 echo "==> 11/14 chunk renderer unit test (TKT-003 Phase A.4 extraction)"
 godot --headless --script unit_tests/test_chunk_renderer.gd 2>&1 | tee /tmp/chunk_renderer.log
