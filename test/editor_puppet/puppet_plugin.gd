@@ -25,11 +25,13 @@ extends EditorPlugin
 const SCENE_PATH := "res://puppet.tscn"
 
 
-# Minimal duck-typed stand-in for the mobile_terrain EditorPlugin, exposing only
-# the fields/methods TerrainInputRouter touches. Lets the puppet drive the REAL
-# input router (the exact path a user's touch/click takes) without needing the
-# shipping plugin's instance — so the objects scenario verifies placement
-# end-to-end through input_router → place_object_at, not just the stamping math.
+# Faithful duck-typed stand-in for the mobile_terrain EditorPlugin, exposing the
+# fields/methods TerrainInputRouter touches AND mirroring the real plugin's
+# object-placement bookkeeping (foliage_placed recording + commit_placement_undo
+# on finalise, using the puppet's REAL EditorUndoRedoManager). Lets the puppet
+# drive the exact path a user's touch takes, including the undo commit that runs
+# between separate taps — so multi-tap accumulation is verified, not just one
+# gesture.
 class _RouterStub:
 	extends RefCounted
 	var selected_node
@@ -44,6 +46,7 @@ class _RouterStub:
 	var heightmap_backup: PackedFloat32Array = PackedFloat32Array()
 	var brush_cursor = null
 	var _last_brush_hit: Vector3 = Vector3.INF
+	var undo_redo  # real EditorUndoRedoManager, injected by the scenario
 
 	func _conform_decal_to_surface(_pos) -> void:
 		pass
@@ -51,11 +54,24 @@ class _RouterStub:
 	func _ensure_backup_for_current_tool() -> void:
 		pass
 
+	# Mirrors mobile_terrain_plugin._on_foliage_placed.
+	func _on_foliage_placed(mmi, index: int, tf: Transform3D) -> void:
+		if not is_instance_valid(mmi):
+			return
+		if not placement_initial_counts.has(mmi):
+			placement_initial_counts[mmi] = index
+		placement_records.append({"mmi": mmi, "index": index, "transform": tf})
+
+	# Mirrors mobile_terrain_plugin._finalize_active_stroke for tool 8.
 	func _finalize_active_stroke() -> void:
-		# Placements already live in the MultiMesh; the real plugin also commits
-		# an undo action here, which a visual test doesn't need.
 		if selected_node != null:
 			selected_node.end_stroke()
+		if undo_redo != null and not placement_records.is_empty():
+			TerrainUndoRecorder.commit_placement_undo(
+				undo_redo, selected_node, placement_records, placement_initial_counts
+			)
+		placement_records.clear()
+		placement_initial_counts.clear()
 
 
 func _enter_tree() -> void:
@@ -134,36 +150,88 @@ func _scenario_objects(terrain, vp: Viewport) -> void:
 	terrain.current_tool = 8
 	terrain.last_placement_pos = Vector3.INF
 
-	# Horizontal screen drag across the middle of the viewport — exactly what a
-	# user does with a finger. Each event's raycast lands on a different part of
-	# the surface, so the placements spread into a visible trail rather than
-	# clustering. object_spacing is widened below so the spheres don't overlap.
-	terrain.object_spacing = 7.0
+	# Separate TAPS (press+release each) at different points — exactly the
+	# user's "tap here, tap there" sequence. object_spacing wide so the spheres
+	# don't overlap; the INF reset per gesture is the router's job.
+	terrain.object_spacing = 2.0
 	var stub := _RouterStub.new()
 	stub.selected_node = terrain
+	stub.undo_redo = get_undo_redo()
+	terrain.foliage_placed.connect(stub._on_foliage_placed)
 	var screen_pts: Array[Vector2] = []
 	var vs: Vector2 = vp.get_visible_rect().size
 	if vs.x > 0.0 and vs.y > 0.0:
-		for k in range(7):
-			var fx: float = lerpf(0.2, 0.8, float(k) / 6.0)
-			screen_pts.append(Vector2(vs.x * fx, vs.y * 0.56))
-	# Touch DOWN on the first point, DRAG through the rest, then RELEASE — all
-	# through TerrainInputRouter.route, exactly as the editor forwards input.
-	if not screen_pts.is_empty():
-		TerrainInputRouter.route(stub, cam, _mk_touch(0, true, screen_pts[0]))
-		for i in range(1, screen_pts.size()):
-			TerrainInputRouter.route(stub, cam, _mk_drag(0, screen_pts[i]))
-		TerrainInputRouter.route(stub, cam, _mk_touch(0, false, screen_pts[screen_pts.size() - 1]))
-	await _frames(6)
+		for k in range(4):
+			var fx: float = lerpf(0.46, 0.62, float(k) / 3.0)
+			screen_pts.append(Vector2(vs.x * fx, vs.y * 0.5))
+	# Drive each tap as its own press→release gesture through the REAL router
+	# (and the real undo commit between taps). Record the running count so a
+	# "single object that relocates each tap" regression is caught.
+	var counts: Array[int] = []
+	for pt in screen_pts:
+		TerrainInputRouter.route(stub, cam, _mk_touch(0, true, pt))
+		TerrainInputRouter.route(stub, cam, _mk_touch(0, false, pt))
+		await _frames(3)
+		counts.append(_count_object_instances(terrain))
+	print("MT_PUPPET_OBJECTS counts after each tap: %s" % str(counts))
+	for mesh in terrain.multimesh_instances:
+		var dbg = terrain.multimesh_instances[mesh]
+		if is_instance_valid(dbg) and dbg.multimesh != null:
+			var origins: Array = []
+			for i in range(dbg.multimesh.instance_count):
+				origins.append(dbg.multimesh.get_instance_transform(i).origin.round())
+			print("MT_PUPPET_OBJECTS origins: %s" % str(origins))
 
-	var placed := 0
+	var placed := _count_object_instances(terrain)
+	# Each distinct tap must ADD an instance — N taps → N objects. A relocating
+	# single object would leave placed==1.
+	var verdict := "PASS" if placed >= screen_pts.size() else "FAIL"
+	print(
+		(
+			"MT_PUPPET_OBJECTS_%s: placed=%d after %d taps (expected %d)"
+			% [verdict, placed, screen_pts.size(), screen_pts.size()]
+		)
+	)
+	_shot(vp, "mt_puppet_objects")  # proof shot at full count, before the undo sim
+
+	# Exercise the undo RESTORE primitive that commit_placement_undo registers
+	# (_apply_object_buffer) with the real RenderingServer buffer: shrink to N-1
+	# and rewrite the buffer, exactly as an undo of the last tap would. The
+	# realloc-clear bug also corrupts undo, so without the buffer-restore every
+	# survivor would collapse onto the world origin. All taps were far from
+	# origin, so any survivor near (0,0,0) means the bug is back.
+	var after_undo := placed
+	var survivors_ok := true
+	for mesh in terrain.multimesh_instances:
+		var u = terrain.multimesh_instances[mesh]
+		if not (is_instance_valid(u) and u.multimesh != null):
+			continue
+		var mmx: MultiMesh = u.multimesh
+		var keep: int = mmx.instance_count - 1
+		var full: PackedFloat32Array = mmx.buffer.duplicate()
+		var stride: int = full.size() / mmx.instance_count if mmx.instance_count > 0 else 0
+		terrain._apply_object_buffer(mmx, keep, full.slice(0, keep * stride))
+		await _frames(2)
+		for i in range(mmx.instance_count):
+			if mmx.get_instance_transform(i).origin.length() < 1.0:
+				survivors_ok = false
+	after_undo = _count_object_instances(terrain)
+	var uverdict := "PASS" if (after_undo == placed - 1 and survivors_ok) else "FAIL"
+	print(
+		(
+			"MT_PUPPET_UNDO_%s: count %d->%d, survivors_kept=%s"
+			% [uverdict, placed, after_undo, str(survivors_ok)]
+		)
+	)
+
+
+func _count_object_instances(terrain) -> int:
+	var n := 0
 	for mesh in terrain.multimesh_instances:
 		var mmi = terrain.multimesh_instances[mesh]
 		if is_instance_valid(mmi) and mmi.multimesh != null:
-			placed += mmi.multimesh.instance_count
-	var verdict := "PASS" if placed >= 2 else "FAIL"
-	print("MT_PUPPET_OBJECTS_%s: placed=%d (drove input_router, expected >=2)" % [verdict, placed])
-	_shot(vp, "mt_puppet_objects")
+			n += mmi.multimesh.instance_count
+	return n
 
 
 func _mk_touch(idx: int, pressed: bool, pos: Vector2) -> InputEventScreenTouch:

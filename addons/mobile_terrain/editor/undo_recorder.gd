@@ -54,41 +54,39 @@ static func commit_sculpt_undo(undo_redo, terrain, heightmap_backup: PackedFloat
 # Commit the object-placement undo action (foliage/multimesh). Returns true
 # if an action was committed. Filters freed multimeshes so undo execution
 # can't crash on a stale reference.
+#
+# Changing MultiMesh.instance_count reallocates and CLEARS the whole transform
+# buffer (any size change wipes it), so undo/redo cannot just rewind the count
+# and trust the surviving instances to keep their transforms — they would all
+# collapse to the origin. Instead we snapshot the FULL transform buffer before
+# (initial slice) and after (current) the stroke, and restore it atomically via
+# the node's _apply_object_buffer (sets count, then rewrites the buffer). `node`
+# is the terrain that owns the multimeshes and the restore method.
 static func commit_placement_undo(
-	undo_redo, placement_records: Array, placement_initial_counts: Dictionary
+	undo_redo, node, placement_records: Array, placement_initial_counts: Dictionary
 ) -> bool:
 	if placement_records.is_empty():
 		return false
 	undo_redo.create_action("Terrain Place Objects")
 
-	# Phase 1: instance_count delta per touched multimesh. Skip any freed
-	# since the stroke (e.g. asset slot removed mid-stroke) — including a
-	# freed reference would crash on undo execution.
+	# One restore op per touched multimesh. Skip any freed since the stroke
+	# (e.g. asset slot removed mid-stroke) — a freed reference would crash on
+	# undo execution.
 	for mmi in placement_initial_counts.keys():
 		if not is_instance_valid(mmi) or mmi.multimesh == null:
 			continue
 		var mm: MultiMesh = mmi.multimesh
 		var initial: int = placement_initial_counts[mmi]
-		var final: int = mm.instance_count
-		if final == initial:
+		var after_count: int = mm.instance_count
+		if after_count == initial:
 			continue
-		# Count up first (do), down on undo — transforms past the new count
-		# aren't rendered, so undo only needs to shrink the count.
-		undo_redo.add_do_property(mm, "instance_count", final)
-		undo_redo.add_undo_property(mm, "instance_count", initial)
-
-	# Phase 2: re-set every transform on redo. MultiMesh may discard data
-	# past instance_count when the buffer shrinks, so we can't trust new
-	# transforms to survive an undo→redo round trip without rewriting. No
-	# undo entries here — undo only shrinks the count; stale data past the
-	# count is invisible and harmless.
-	for placement in placement_records:
-		var mmi: MultiMeshInstance3D = placement.mmi
-		if not is_instance_valid(mmi) or mmi.multimesh == null:
-			continue
-		undo_redo.add_do_method(
-			mmi.multimesh, "set_instance_transform", placement.index, placement.transform
-		)
+		var after_buffer: PackedFloat32Array = mm.buffer.duplicate()
+		# Per-instance stride (12 floats for TRANSFORM_3D); derive it from the
+		# live buffer so 2D/3D both work without a hard-coded constant.
+		var stride: int = after_buffer.size() / after_count if after_count > 0 else 0
+		var before_buffer: PackedFloat32Array = after_buffer.slice(0, initial * stride)
+		undo_redo.add_do_method(node, "_apply_object_buffer", mm, after_count, after_buffer)
+		undo_redo.add_undo_method(node, "_apply_object_buffer", mm, initial, before_buffer)
 
 	undo_redo.commit_action(false)
 	return true

@@ -137,7 +137,20 @@ static func place_one(
 		mesh_min_y
 	)
 	var idx: int = mm.instance_count
+	# CRITICAL: growing instance_count reallocates the transform buffer and
+	# CLEARS every existing instance (RenderingServer behaviour — any
+	# instance_count change wipes the buffer). So snapshot the current
+	# transforms, grow, then restore them before writing the new one. Without
+	# this, every placement reset all previously placed objects to the origin,
+	# so only the newest object stayed where it was tapped and the rest
+	# "disappeared" (collapsed onto world origin).
+	var kept: Array[Transform3D] = []
+	kept.resize(idx)
+	for i in range(idx):
+		kept[i] = mm.get_instance_transform(i)
 	mm.instance_count = idx + 1
+	for i in range(idx):
+		mm.set_instance_transform(i, kept[i])
 	mm.set_instance_transform(idx, local_tf)
 	return idx
 

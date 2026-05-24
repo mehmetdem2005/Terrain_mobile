@@ -1792,6 +1792,21 @@ func place_object_at(world_pos: Vector3, surface_normal: Vector3) -> bool:
 	return true
 
 
+# Undo/redo restore point for object placement (called by
+# TerrainUndoRecorder.commit_placement_undo). Sets a MultiMesh's instance_count
+# AND rewrites its full transform buffer as ONE operation. Order is the whole
+# point: changing instance_count reallocates and CLEARS the buffer, so the
+# transforms must be written AFTER — and it must be a single method so the
+# undo stack can't split it into two property writes that execute in reverse
+# order on undo (which would set the buffer first, then clear it).
+func _apply_object_buffer(mm: MultiMesh, count: int, buffer: PackedFloat32Array) -> void:
+	if not is_instance_valid(mm):
+		return
+	mm.instance_count = count
+	if count > 0 and buffer.size() == mm.buffer.size():
+		mm.buffer = buffer
+
+
 func get_intersection_raymarch_persistent(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
 	# V22: delegated to TerrainRaymarchSystem so the algorithm can be
 	# unit-tested without spinning up the whole terrain node.
