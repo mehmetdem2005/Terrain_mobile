@@ -33,6 +33,7 @@ const W_INLINE_NO_PATH := "MT-W11: external_data_path boş, inline edilecek bir 
 const W_INLINE_RES_MISSING := "MT-W12: External .res '%s' bulunamadı. Yol korundu — dosyayı geri koyup tekrar dene."
 const W_INLINE_LOAD_FAILED := "MT-W13: External load height_data'yı dolduramadı; inline iptal edildi."
 const W_TEXTURE_SLOTS_UNDERFLOW := "MT-W14: terrain_textures (%d) < %d kanal; eksik slotlar boş (gri) görünür."
+const W_DETECT_STORED_UNUSED := "MT-W15: Slot %d: %s map(ler)i bulunup sahneye kaydedildi, ama bu mobil shader onları render ETMİYOR (yalnızca albedo/normal/roughness/AO). Özel shader için saklanır."
 
 
 static func error(code_template: String, args: Array = []) -> void:

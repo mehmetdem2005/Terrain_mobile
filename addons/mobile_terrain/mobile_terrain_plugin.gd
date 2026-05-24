@@ -996,7 +996,16 @@ func _build_settings_section(parent: Control) -> void:
 	_pbr_slot_label.add_theme_font_size_override("font_size", 10)
 	_pbr_slot_label.add_theme_color_override("font_color", Color(0.55, 0.8, 0.6))
 	parent.add_child(_pbr_slot_label)
-	_add_setting_slider(parent, "Doku Ölçeği", "texture_scale", 0.01, 4.0, 0.01, true)
+	_add_setting_slider(
+		parent,
+		"Döşeme Sıklığı",
+		"texture_scale",
+		0.01,
+		4.0,
+		0.01,
+		true,
+		"Doku döşeme sıklığı. BÜYÜK değer = doku daha sık döşenir (küçük/ince görünür). KÜÇÜK değer = doku uzar/büyür. (Unity/Unreal'deki 'Tiling' ile aynı yön.)"
+	)
 	_add_setting_slider(parent, "Normal Gücü", "normal_strength", 0.0, 2.0, 0.01, true)
 	_add_setting_slider(parent, "Pürüzlülük ×", "roughness_multiplier", 0.0, 2.0, 0.01, true)
 	_add_setting_slider(parent, "AO Gücü", "ao_strength", 0.0, 1.0, 0.01, true)
@@ -1031,7 +1040,8 @@ func _add_setting_slider(
 	mn: float,
 	mx: float,
 	step: float,
-	per_slot: bool = false
+	per_slot: bool = false,
+	tooltip: String = ""
 ) -> void:
 	var row := HBoxContainer.new()
 	var lbl := Label.new()
@@ -1065,6 +1075,9 @@ func _add_setting_slider(
 			else:
 				selected_node.set(prop, v)
 	)
+	if not tooltip.is_empty():
+		lbl.tooltip_text = tooltip
+		slider.tooltip_text = tooltip
 	_setting_sliders[prop] = slider
 	_setting_value_labels[prop] = val
 	_per_slot_props[prop] = per_slot
@@ -1521,23 +1534,31 @@ func _auto_detect_maps(slot_idx: int) -> void:
 	if detected.has("ao") and detected["ao"] != null:
 		selected_node.terrain_ao[slot_idx] = detected["ao"]
 		filled.append("AO: " + (detected["ao"] as Texture2D).resource_path)
-	# V21: extra storage slots — populate alongside the active maps so
-	# users don't have to manually wire _disp / _metal / _emit.
+	# V21: Height / Metallic / Emission are detected and STORED (so advanced
+	# users can wire a custom shader) but the mobile terrain shader has no
+	# uniforms for them — it only renders albedo / normal / roughness / AO.
+	# Track them separately from `filled` so we can tell the user they were
+	# saved-but-not-rendered, instead of silently storing dead maps.
+	var stored_unused: PackedStringArray = PackedStringArray()
 	if detected.has("height") and detected["height"] != null:
 		selected_node.terrain_height[slot_idx] = detected["height"]
-		filled.append("Height: " + (detected["height"] as Texture2D).resource_path)
+		stored_unused.append("Height")
 	if detected.has("metallic") and detected["metallic"] != null:
 		selected_node.terrain_metallic[slot_idx] = detected["metallic"]
-		filled.append("Metallic: " + (detected["metallic"] as Texture2D).resource_path)
+		stored_unused.append("Metallic")
 	if detected.has("emission") and detected["emission"] != null:
 		selected_node.terrain_emission[slot_idx] = detected["emission"]
-		filled.append("Emission: " + (detected["emission"] as Texture2D).resource_path)
+		stored_unused.append("Emission")
 
-	if filled.is_empty():
+	if filled.is_empty() and stored_unused.is_empty():
 		TerrainDiagnostics.warn(
 			TerrainDiagnostics.W_DETECT_NO_SIBLINGS, [slot_idx, albedo_path.get_file()]
 		)
 		return
+	if not stored_unused.is_empty():
+		TerrainDiagnostics.warn(
+			TerrainDiagnostics.W_DETECT_STORED_UNUSED, [slot_idx, ", ".join(stored_unused)]
+		)
 	selected_node.update_shader_textures()
 	_refresh_manager_ui()
 	_save_selected_scene()
