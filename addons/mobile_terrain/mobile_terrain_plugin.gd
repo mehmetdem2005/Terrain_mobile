@@ -3,6 +3,10 @@ extends EditorPlugin
 
 const TerrainNode = preload("res://addons/mobile_terrain/mobile_terrain_node.gd")
 var selected_node = null
+# "A viewport gesture is currently active." Covers every left-drag tool: sculpt,
+# paint, AND object placement (tool 8). The input router sets it on press and
+# clears it on release; the tool-change / hide / terrain-switch finalisers below
+# check it to commit a half-finished gesture under the correct tool's undo.
 var is_sculpting = false
 
 # UI Elements
@@ -2159,7 +2163,7 @@ func _finalize_active_stroke() -> void:
 		TerrainUndoRecorder.commit_sculpt_undo(undo_redo, selected_node, heightmap_backup)
 	elif not placement_records.is_empty():  # tool == 8, Object
 		TerrainUndoRecorder.commit_placement_undo(
-			undo_redo, placement_records, placement_initial_counts
+			undo_redo, selected_node, placement_records, placement_initial_counts
 		)
 		# Clear records after commit. The builder intentionally doesn't clear
 		# (re-entrant safety); at the finaliser level (one call per stroke

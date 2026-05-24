@@ -158,7 +158,7 @@ func _set_brush_strength(val: float) -> void:
 	brush_strength = clampf(val, 0.1, 2.0)
 
 
-# Object placement controls (TerrainObjectPlacer). Simple "stamp" model:
+# Object placement controls (TerrainObjectPlacement). Simple "stamp" model:
 # with the Object tool active, dragging lays ONE instance per
 # `object_spacing` units travelled (a held finger places exactly one).
 # Replaces the old random-scatter system.
@@ -257,7 +257,7 @@ var _deferred_chunk_size: int = 0
 # Prevents setter cascade -> initialize_terrain -> setter cascade loops.
 var _rebuilding_terrain: bool = false
 
-# Emitted whenever TerrainObjectPlacer successfully adds an instance to a
+# Emitted whenever TerrainObjectPlacement successfully adds an instance to a
 # MultiMesh. The editor plugin listens to this signal to
 # build per-stroke undo actions for object placement — without it, plugin
 # code has no way to know which MultiMesh got modified or which transform
@@ -1749,7 +1749,7 @@ func repurpose_multimesh_to(old_mesh: Mesh, new_mesh: Mesh) -> bool:
 	# unaffected by changing `mesh`, so every placement stays put but now
 	# renders as the new model.
 	mmi.multimesh.mesh = new_mesh
-	mmi.name = "Assets_" + TerrainObjectPlacer.mesh_label(new_mesh)
+	mmi.name = "Assets_" + TerrainObjectPlacement.mesh_label(new_mesh)
 	# Re-key the registry so future lookups by new_mesh find this mmi.
 	multimesh_instances.erase(old_mesh)
 	multimesh_instances[new_mesh] = mmi
@@ -1757,10 +1757,54 @@ func repurpose_multimesh_to(old_mesh: Mesh, new_mesh: Mesh) -> bool:
 
 
 func _get_or_create_multimesh(target_mesh: Mesh) -> MultiMeshInstance3D:
-	# Delegates to TerrainObjectPlacer. No resource_path requirement now, so
-	# inspector primitives (BoxMesh, ...) place correctly; the registry is
-	# keyed by the Mesh resource itself (see systems/object_placer.gd).
-	return TerrainObjectPlacer.get_or_create_mmi(self, target_mesh, multimesh_instances)
+	# Delegates to TerrainObjectPlacement. No resource_path requirement, so
+	# inspector primitives (BoxMesh, CapsuleMesh, ...) place correctly; the
+	# registry is keyed by the Mesh resource itself (see
+	# systems/object_placement.gd).
+	return TerrainObjectPlacement.get_or_create_mmi(self, target_mesh, multimesh_instances)
+
+
+# Place ONE object instance at a world-space terrain hit, for the currently
+# selected object slot. The editor input router calls this directly on each
+# terrain hit of an Object-tool gesture (tap = one; drag = a spaced trail).
+# Returns true if an instance was actually added (slot valid, mesh set, far
+# enough from the previous placement). Owns the two pieces of node state the
+# placement module is deliberately kept free of: the per-mesh MultiMesh
+# registry and the foliage_placed signal (which drives undo recording).
+func place_object_at(world_pos: Vector3, surface_normal: Vector3) -> bool:
+	if current_object_slot < 0 or current_object_slot >= asset_meshes.size():
+		return false
+	var mesh: Mesh = asset_meshes[current_object_slot]
+	if mesh == null:
+		return false
+	if not TerrainObjectPlacement.should_place(last_placement_pos, world_pos, object_spacing):
+		return false
+	var mmi := TerrainObjectPlacement.get_or_create_mmi(self, mesh, multimesh_instances)
+	if mmi == null:
+		return false
+	var idx := TerrainObjectPlacement.place_one(
+		mmi, world_pos, surface_normal, object_scale, object_align_to_normal, object_random_yaw
+	)
+	if idx < 0:
+		return false
+	last_placement_pos = world_pos
+	foliage_placed.emit(mmi, idx, mmi.multimesh.get_instance_transform(idx))
+	return true
+
+
+# Undo/redo restore point for object placement (called by
+# TerrainUndoRecorder.commit_placement_undo). Sets a MultiMesh's instance_count
+# AND rewrites its full transform buffer as ONE operation. Order is the whole
+# point: changing instance_count reallocates and CLEARS the buffer, so the
+# transforms must be written AFTER — and it must be a single method so the
+# undo stack can't split it into two property writes that execute in reverse
+# order on undo (which would set the buffer first, then clear it).
+func _apply_object_buffer(mm: MultiMesh, count: int, buffer: PackedFloat32Array) -> void:
+	if not is_instance_valid(mm):
+		return
+	mm.instance_count = count
+	if count > 0 and buffer.size() == mm.buffer.size():
+		mm.buffer = buffer
 
 
 func get_intersection_raymarch_persistent(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
@@ -1812,28 +1856,12 @@ func end_stroke():
 		chunk_size = pending
 
 
-func apply_brush_stroke_slope(hit_point: Vector3, hit_normal: Vector3):
-	if current_tool == 8:  # Object — simple one-per-step stamp
-		# Drag lays a spaced trail; a held-still finger places exactly one.
-		# Delegated to TerrainObjectPlacer (systems/object_placer.gd).
-		if current_object_slot < 0 or current_object_slot >= asset_meshes.size():
-			return
-		var mesh: Mesh = asset_meshes[current_object_slot]
-		if mesh == null:
-			return
-		if not TerrainObjectPlacer.should_place(last_placement_pos, hit_point, object_spacing):
-			return
-		var mmi := TerrainObjectPlacer.get_or_create_mmi(self, mesh, multimesh_instances)
-		if mmi == null:
-			return
-		var idx := TerrainObjectPlacer.place_one(
-			mmi, hit_point, hit_normal, object_scale, object_align_to_normal, object_random_yaw
-		)
-		if idx >= 0:
-			last_placement_pos = hit_point
-			foliage_placed.emit(mmi, idx, mmi.multimesh.get_instance_transform(idx))
-		return
-
+func apply_brush_stroke_slope(hit_point: Vector3, _hit_normal: Vector3):
+	# Sculpt/paint only. Object placement (tool 8) no longer routes through here
+	# — it has its own discrete gesture (editor input router → place_object_at),
+	# decoupled from the continuous-stroke machinery below (backups, the
+	# stationary rate-limit, the step-distance lerp).
+	#
 	# V21: rate-limit stationary brush application.
 	#
 	# Mobile touch motion events fire every few ms even when the user

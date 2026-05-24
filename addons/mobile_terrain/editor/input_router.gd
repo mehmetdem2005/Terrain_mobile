@@ -19,6 +19,12 @@ extends RefCounted
 ## Verified via the headed editor smoke test; interactive sculpt/paint
 ## behaviour needs manual editor verification.
 
+# Object-placement tool id (matches mobile_terrain_node.current_tool == 8). The
+# press/motion/release handlers branch on this: object placement is a discrete
+# tap/drag gesture, NOT a continuous sculpt stroke, so it runs its own path
+# (decoupled from start_stroke / backups / the stationary rate-limit).
+const OBJECT_TOOL := 8
+
 
 # Entry point — called from EditorPlugin._forward_3d_gui_input. Returns one
 # of EditorPlugin.AFTER_GUI_INPUT_{PASS,STOP}.
@@ -87,6 +93,8 @@ static func _is_left_release(event: InputEvent) -> bool:
 
 
 static func _on_left_press(p, camera: Camera3D, event: InputEvent) -> int:
+	if p.selected_node.current_tool == OBJECT_TOOL:
+		return _on_object_press(p, camera, event)
 	# V22 FIX: raycast BEFORE start_stroke(). A miss used to open a stroke
 	# (allocating a paint-cache image) then return without closing it,
 	# leaving the cache pointing at a stale splatmap image — the next stroke
@@ -115,6 +123,8 @@ static func _on_left_press(p, camera: Camera3D, event: InputEvent) -> int:
 
 
 static func _on_left_release(p) -> int:
+	if p.selected_node.current_tool == OBJECT_TOOL:
+		return _on_object_release(p)
 	# V21: route through the shared finaliser so all stroke-end paths
 	# (mouse-up, brush-toggle-off, tool-change, visibility-loss) behave
 	# identically and the backup arrays get cleared (TKT-004 H2/H3).
@@ -130,6 +140,8 @@ static func _on_left_release(p) -> int:
 
 
 static func _on_motion(p, camera: Camera3D, event: InputEvent) -> int:
+	if p.selected_node.current_tool == OBJECT_TOOL:
+		return _on_object_motion(p, camera, event)
 	var res = p.selected_node.get_intersection_raymarch_persistent(camera, event.position)
 	if typeof(res) == TYPE_DICTIONARY and res.pos != Vector3.INF:
 		p._conform_decal_to_surface(res.pos)
@@ -149,3 +161,65 @@ static func _on_motion(p, camera: Camera3D, event: InputEvent) -> int:
 	if p.is_sculpting:
 		return EditorPlugin.AFTER_GUI_INPUT_STOP
 	return EditorPlugin.AFTER_GUI_INPUT_PASS
+
+
+# --- Object placement path (tool 8) ----------------------------------------
+# Discrete "tap the terrain → drop one object" gesture, kept entirely separate
+# from the sculpt-stroke machinery. Reuses the plugin's is_sculpting flag as
+# the generic "a viewport gesture is active" marker (so the existing
+# tool-change / hide / terrain-switch finalisers commit a half-finished
+# placement) and its placement_records bookkeeping (committed as one undo
+# action on release via _finalize_active_stroke's tool-8 branch).
+
+
+# Press: ARM the gesture even when this exact point misses the terrain. The old
+# path only placed when the press-point raycast hit, so a near-miss (very
+# common on touch, or when a drag starts just off the surface) left the decal
+# sliding under the finger with nothing ever dropping — the reported bug. Here
+# the gesture opens unconditionally and the first sample that hits (this press
+# OR a later drag) drops the object.
+static func _on_object_press(p, camera: Camera3D, event: InputEvent) -> int:
+	p.is_sculpting = true
+	# Fresh per-gesture undo bookkeeping; reset the spacing gate so the first
+	# hit always places (should_place treats INF as "first of the gesture").
+	p.placement_records.clear()
+	p.placement_initial_counts.clear()
+	p.selected_node.last_placement_pos = Vector3.INF
+	var result = p.selected_node.get_intersection_raymarch_persistent(camera, event.position)
+	if typeof(result) == TYPE_DICTIONARY and result.pos != Vector3.INF:
+		p._conform_decal_to_surface(result.pos)
+		p.selected_node.place_object_at(result.pos, result.normal)
+	# STOP even on a miss so we own the subsequent drag (otherwise the editor's
+	# camera controller claims the one-finger drag and the placement never
+	# arrives). Two-finger gestures still PASS for orbit/zoom (see route()).
+	return EditorPlugin.AFTER_GUI_INPUT_STOP
+
+
+# Motion: while the gesture is live, drop an object at each terrain hit. Spacing
+# is enforced inside place_object_at (via the node's last_placement_pos), so a
+# stationary finger drops exactly one and a drag lays a spaced trail.
+static func _on_object_motion(p, camera: Camera3D, event: InputEvent) -> int:
+	var res = p.selected_node.get_intersection_raymarch_persistent(camera, event.position)
+	if typeof(res) == TYPE_DICTIONARY and res.pos != Vector3.INF:
+		p._conform_decal_to_surface(res.pos)
+		if p.is_sculpting:
+			p.selected_node.place_object_at(res.pos, res.normal)
+	else:
+		if is_instance_valid(p.brush_cursor):
+			p.brush_cursor.hide()
+		p._last_brush_hit = Vector3.INF
+	if p.is_sculpting:
+		return EditorPlugin.AFTER_GUI_INPUT_STOP
+	return EditorPlugin.AFTER_GUI_INPUT_PASS
+
+
+# Release: commit the whole gesture's placements as one undo action through the
+# shared finaliser (its tool-8 branch calls commit_placement_undo and clears
+# the records). No-op pass-through if no gesture was active.
+static func _on_object_release(p) -> int:
+	var was_active: bool = p.is_sculpting
+	p.is_sculpting = false
+	if not was_active:
+		return EditorPlugin.AFTER_GUI_INPUT_PASS
+	p._finalize_active_stroke()
+	return EditorPlugin.AFTER_GUI_INPUT_STOP

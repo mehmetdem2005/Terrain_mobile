@@ -32,11 +32,11 @@ class MockUndoRedo:
 	func add_undo_property(obj, prop, val) -> void:
 		undo_props.append([obj, prop, val])
 
-	func add_do_method(obj, method, _a = null, _b = null) -> void:
-		do_methods.append([obj, method])
+	func add_do_method(obj, method, a = null, b = null, c = null) -> void:
+		do_methods.append([obj, method, a, b, c])
 
-	func add_undo_method(obj, method, _a = null, _b = null) -> void:
-		undo_methods.append([obj, method])
+	func add_undo_method(obj, method, a = null, b = null, c = null) -> void:
+		undo_methods.append([obj, method, a, b, c])
 
 	func commit_action(_execute: bool = true) -> void:
 		committed = true
@@ -144,7 +144,7 @@ func _test_sculpt_empty() -> String:
 
 func _test_placement_empty() -> String:
 	var ur := MockUndoRedo.new()
-	var committed: bool = Recorder.commit_placement_undo(ur, [], {})
+	var committed: bool = Recorder.commit_placement_undo(ur, null, [], {})
 	if committed:
 		return "empty records must return false"
 	if ur.create_count != 0:
@@ -154,6 +154,7 @@ func _test_placement_empty() -> String:
 
 func _test_placement_undo() -> String:
 	var ur := MockUndoRedo.new()
+	var node := MockTerrain.new()  # the restore-method target
 	var mmi := MultiMeshInstance3D.new()
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -165,18 +166,26 @@ func _test_placement_undo() -> String:
 		{"mmi": mmi, "index": 1, "transform": Transform3D()},
 		{"mmi": mmi, "index": 2, "transform": Transform3D()},
 	]
-	var committed: bool = Recorder.commit_placement_undo(ur, records, initial_counts)
+	var committed: bool = Recorder.commit_placement_undo(ur, node, records, initial_counts)
 	mmi.free()
 	if not committed:
 		return "non-empty records must return true"
 	if ur.action_name != "Terrain Place Objects":
 		return "action name should be 'Terrain Place Objects', got '%s'" % ur.action_name
-	# instance_count delta: do=3 (final), undo=0 (initial).
-	if ur.do_props.size() != 1 or ur.do_props[0][1] != "instance_count" or ur.do_props[0][2] != 3:
-		return "do_property must set instance_count to final count 3"
-	if ur.undo_props.size() != 1 or ur.undo_props[0][2] != 0:
-		return "undo_property must restore instance_count to initial 0"
-	# one set_instance_transform do-method per placement record.
-	if ur.do_methods.size() != 3:
-		return "must add a set_instance_transform do-method per record, got %d" % ur.do_methods.size()
+	# Buffer-restore via the node's _apply_object_buffer, one op each direction.
+	# Changing instance_count clears the buffer, so a property-based count rewind
+	# would strand survivors at the origin — must be a single restore method.
+	if not ur.do_props.is_empty() or not ur.undo_props.is_empty():
+		return "placement undo must use methods (buffer restore), not properties"
+	# do-method args: [node, "_apply_object_buffer", mm, final_count, after_buffer].
+	if ur.do_methods.size() != 1 or ur.do_methods[0][1] != "_apply_object_buffer":
+		return "do-method must be _apply_object_buffer, got %d ops" % ur.do_methods.size()
+	if ur.do_methods[0][0] != node:
+		return "do-method target must be the terrain node"
+	if ur.do_methods[0][3] != 3:
+		return "do-method must restore final count 3, got %s" % str(ur.do_methods[0][3])
+	if ur.undo_methods.size() != 1 or ur.undo_methods[0][1] != "_apply_object_buffer":
+		return "undo-method must be _apply_object_buffer"
+	if ur.undo_methods[0][3] != 0:
+		return "undo-method must restore initial count 0, got %s" % str(ur.undo_methods[0][3])
 	return ""
