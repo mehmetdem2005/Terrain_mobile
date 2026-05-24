@@ -16,11 +16,20 @@ var _failed: int = 0
 class MockNode:
 	extends RefCounted
 	var hit: Dictionary = {"pos": Vector3(1, 2, 3), "normal": Vector3.UP}
+	# Optional scripted result queue: each raycast pops the next entry (a
+	# {"pos": Vector3.INF} entry is a miss); when empty, falls back to `hit`.
+	# Lets a test feed "press misses, then drag hits".
+	var hit_queue: Array = []
+	var current_tool: int = 0
+	var last_placement_pos: Vector3 = Vector3.INF
 	var start_calls: int = 0
 	var apply_calls: int = 0
 	var end_calls: int = 0
+	var place_calls: int = 0
 
 	func get_intersection_raymarch_persistent(_cam, _pos):
+		if not hit_queue.is_empty():
+			return hit_queue.pop_front()
 		return hit
 
 	func start_stroke() -> void:
@@ -31,6 +40,15 @@ class MockNode:
 
 	func end_stroke() -> void:
 		end_calls += 1
+
+	# Mirrors mobile_terrain_node.place_object_at: counts a successful drop and
+	# advances the spacing anchor. No spacing math here — should_place is
+	# covered by the pure object-placement unit test; this just proves the
+	# router calls placement on each terrain hit of an Object-tool gesture.
+	func place_object_at(world_pos: Vector3, _normal: Vector3) -> bool:
+		place_calls += 1
+		last_placement_pos = world_pos
+		return true
 
 
 class MockPlugin:
@@ -68,6 +86,10 @@ func _init() -> void:
 	_test_emulated_mouse_dropped_during_touch()
 	_test_mouse_still_works()
 	_test_multifinger_passes_to_editor()
+	_test_object_tap_places()
+	_test_object_press_miss_then_drag_places()
+	_test_object_drag_lays_trail()
+	_test_object_mouse_click_places()
 	if _failed == 0:
 		print("INPUT_ROUTER_TEST_OK")
 		quit(0)
@@ -152,8 +174,12 @@ func _test_emulated_mouse_dropped_during_touch() -> void:
 	var n = pair[1]
 	Router.route(p, null, _touch(0, true, Vector2(10, 10)))  # start: start=1, apply=1
 	var r: int = Router.route(p, null, _mouse_left(true, Vector2(10, 10)))  # emulated
-	_check(n.start_calls == 1, "emulated mouse during touch does not re-start (got %d)" % n.start_calls)
-	_check(n.apply_calls == 1, "emulated mouse during touch does not place (got %d)" % n.apply_calls)
+	_check(
+		n.start_calls == 1, "emulated mouse during touch does not re-start (got %d)" % n.start_calls
+	)
+	_check(
+		n.apply_calls == 1, "emulated mouse during touch does not place (got %d)" % n.apply_calls
+	)
 	_check(r == EditorPlugin.AFTER_GUI_INPUT_STOP, "emulated mouse swallowed (STOP)")
 
 
@@ -174,3 +200,63 @@ func _test_multifinger_passes_to_editor() -> void:
 	var r: int = Router.route(p, null, _touch(1, true, Vector2(10, 10)))  # second finger
 	_check(n.start_calls == 0, "second finger does not start a stroke")
 	_check(r == EditorPlugin.AFTER_GUI_INPUT_PASS, "second finger passes to editor (camera)")
+
+
+# --- Object tool (current_tool == 8) ---------------------------------------
+
+
+func _test_object_tap_places() -> void:
+	var pair := _new_pair()
+	var p = pair[0]
+	var n = pair[1]
+	n.current_tool = 8
+	var r: int = Router.route(p, null, _touch(0, true, Vector2(10, 10)))
+	_check(n.place_calls == 1, "object tap places one (got %d)" % n.place_calls)
+	_check(p.is_sculpting, "object press arms the gesture")
+	_check(n.start_calls == 0, "object press does NOT open a sculpt stroke")
+	_check(r == EditorPlugin.AFTER_GUI_INPUT_STOP, "object press returns STOP")
+	r = Router.route(p, null, _touch(0, false, Vector2(10, 10)))
+	_check(p.finalize_calls == 1, "object release finalizes (commits placement undo)")
+	_check(not p.is_sculpting, "object release clears the gesture")
+
+
+# REGRESSION (the reported bug): a press that MISSES the terrain must still arm
+# the gesture so the first drag sample that hits drops the object. The old path
+# returned PASS on a press-miss and never set is_sculpting, so the decal slid
+# under the finger with nothing ever placed ("obje parmağı takip ediyor ama
+# yerleşmiyor").
+func _test_object_press_miss_then_drag_places() -> void:
+	var pair := _new_pair()
+	var p = pair[0]
+	var n = pair[1]
+	n.current_tool = 8
+	n.hit_queue = [{"pos": Vector3.INF, "normal": Vector3.UP}]  # the press misses
+	var r: int = Router.route(p, null, _touch(0, true, Vector2(10, 10)))
+	_check(n.place_calls == 0, "press-miss places nothing yet (got %d)" % n.place_calls)
+	_check(p.is_sculpting, "press-miss STILL arms the gesture (the fix)")
+	_check(r == EditorPlugin.AFTER_GUI_INPUT_STOP, "press-miss returns STOP so we own the drag")
+	# Drag lands on the terrain (queue now empty → falls back to the hit dict).
+	Router.route(p, null, _drag(0, Vector2(40, 40)))
+	_check(n.place_calls == 1, "first drag-hit drops the object (got %d)" % n.place_calls)
+
+
+func _test_object_drag_lays_trail() -> void:
+	var pair := _new_pair()
+	var p = pair[0]
+	var n = pair[1]
+	n.current_tool = 8
+	Router.route(p, null, _touch(0, true, Vector2(10, 10)))  # place 1
+	Router.route(p, null, _drag(0, Vector2(40, 40)))  # place 2
+	Router.route(p, null, _drag(0, Vector2(70, 70)))  # place 3
+	_check(n.place_calls == 3, "drag lays a placement trail (got %d)" % n.place_calls)
+
+
+func _test_object_mouse_click_places() -> void:
+	var pair := _new_pair()
+	var p = pair[0]
+	var n = pair[1]
+	n.current_tool = 8
+	var r: int = Router.route(p, null, _mouse_left(true, Vector2(5, 5)))
+	_check(n.place_calls == 1, "mouse click places one object (got %d)" % n.place_calls)
+	_check(n.start_calls == 0, "object mouse press does NOT open a sculpt stroke")
+	_check(r == EditorPlugin.AFTER_GUI_INPUT_STOP, "object mouse press returns STOP")

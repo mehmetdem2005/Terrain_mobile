@@ -3,6 +3,10 @@ extends EditorPlugin
 
 const TerrainNode = preload("res://addons/mobile_terrain/mobile_terrain_node.gd")
 var selected_node = null
+# "A viewport gesture is currently active." Covers every left-drag tool: sculpt,
+# paint, AND object placement (tool 8). The input router sets it on press and
+# clears it on release; the tool-change / hide / terrain-switch finalisers below
+# check it to commit a half-finished gesture under the correct tool's undo.
 var is_sculpting = false
 
 # UI Elements

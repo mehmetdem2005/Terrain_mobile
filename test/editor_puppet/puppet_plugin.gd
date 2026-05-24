@@ -25,6 +25,39 @@ extends EditorPlugin
 const SCENE_PATH := "res://puppet.tscn"
 
 
+# Minimal duck-typed stand-in for the mobile_terrain EditorPlugin, exposing only
+# the fields/methods TerrainInputRouter touches. Lets the puppet drive the REAL
+# input router (the exact path a user's touch/click takes) without needing the
+# shipping plugin's instance — so the objects scenario verifies placement
+# end-to-end through input_router → place_object_at, not just the stamping math.
+class _RouterStub:
+	extends RefCounted
+	var selected_node
+	var _cached_camera
+	var _cached_mouse_pos: Vector2 = Vector2.ZERO
+	var brush_enabled: bool = true
+	var _touch_active: bool = false
+	var is_sculpting: bool = false
+	var placement_records: Array = []
+	var placement_initial_counts: Dictionary = {}
+	var splatmap_backup: PackedByteArray = PackedByteArray()
+	var heightmap_backup: PackedFloat32Array = PackedFloat32Array()
+	var brush_cursor = null
+	var _last_brush_hit: Vector3 = Vector3.INF
+
+	func _conform_decal_to_surface(_pos) -> void:
+		pass
+
+	func _ensure_backup_for_current_tool() -> void:
+		pass
+
+	func _finalize_active_stroke() -> void:
+		# Placements already live in the MultiMesh; the real plugin also commits
+		# an undo action here, which a visual test doesn't need.
+		if selected_node != null:
+			selected_node.end_stroke()
+
+
 func _enter_tree() -> void:
 	if OS.has_environment("MT_PUPPET"):
 		call_deferred("_run")
@@ -71,19 +104,23 @@ func _shot(vp: Viewport, shot_name: String) -> void:
 		printerr("MT_PUPPET: shot failed " + shot_name)
 
 
-# Sculpt hills, place spheres along a line via the real placement path, shoot.
+# Sculpt hills, then place spheres by driving the REAL input router with
+# synthetic touch events (press + drag trail + release) — the same path a
+# user's finger takes. Asserts objects actually landed, then shoots.
 func _scenario_objects(terrain, vp: Viewport) -> void:
 	var hd := PackedFloat32Array()
 	hd.resize(64 * 64)
 	for z in range(64):
 		for x in range(64):
-			hd[z * 64 + x] = 6.0 + 5.0 * sin(x * 0.35) * cos(z * 0.3)
+			hd[z * 64 + x] = 3.0 + 1.4 * sin(x * 0.28) * cos(z * 0.24)
 	terrain.height_data = hd
 	terrain.force_update_all()
 	await _frames(8)
 	var cam := vp.get_camera_3d()
 	if cam != null:
-		cam.look_at_from_position(Vector3(32, 15, 104), Vector3(34, 8, 56), Vector3.UP)
+		# Steep near-top-down view so every placed object is visible (a low/3-4
+		# angle lines the trail up in depth and the front sphere hides the rest).
+		cam.look_at_from_position(Vector3(32, 78, 72), Vector3(32, 2, 34), Vector3.UP)
 	await _frames(5)
 	var sphere := SphereMesh.new()
 	sphere.radius = 3.5
@@ -95,15 +132,53 @@ func _scenario_objects(terrain, vp: Viewport) -> void:
 	terrain.asset_meshes.append(sphere)
 	terrain.current_object_slot = 0
 	terrain.current_tool = 8
-	terrain.start_stroke()
-	for k in range(6):
-		var wx := 12.0 + k * 8.0
-		var wz := 56.0
-		var wy: float = terrain.get_height(int(wx), int(wz))
-		terrain.apply_brush_stroke_slope(Vector3(wx, wy, wz), Vector3.UP)
-	terrain.end_stroke()
+	terrain.last_placement_pos = Vector3.INF
+
+	# Horizontal screen drag across the middle of the viewport — exactly what a
+	# user does with a finger. Each event's raycast lands on a different part of
+	# the surface, so the placements spread into a visible trail rather than
+	# clustering. object_spacing is widened below so the spheres don't overlap.
+	terrain.object_spacing = 7.0
+	var stub := _RouterStub.new()
+	stub.selected_node = terrain
+	var screen_pts: Array[Vector2] = []
+	var vs: Vector2 = vp.get_visible_rect().size
+	if vs.x > 0.0 and vs.y > 0.0:
+		for k in range(7):
+			var fx: float = lerpf(0.2, 0.8, float(k) / 6.0)
+			screen_pts.append(Vector2(vs.x * fx, vs.y * 0.56))
+	# Touch DOWN on the first point, DRAG through the rest, then RELEASE — all
+	# through TerrainInputRouter.route, exactly as the editor forwards input.
+	if not screen_pts.is_empty():
+		TerrainInputRouter.route(stub, cam, _mk_touch(0, true, screen_pts[0]))
+		for i in range(1, screen_pts.size()):
+			TerrainInputRouter.route(stub, cam, _mk_drag(0, screen_pts[i]))
+		TerrainInputRouter.route(stub, cam, _mk_touch(0, false, screen_pts[screen_pts.size() - 1]))
 	await _frames(6)
+
+	var placed := 0
+	for mesh in terrain.multimesh_instances:
+		var mmi = terrain.multimesh_instances[mesh]
+		if is_instance_valid(mmi) and mmi.multimesh != null:
+			placed += mmi.multimesh.instance_count
+	var verdict := "PASS" if placed >= 2 else "FAIL"
+	print("MT_PUPPET_OBJECTS_%s: placed=%d (drove input_router, expected >=2)" % [verdict, placed])
 	_shot(vp, "mt_puppet_objects")
+
+
+func _mk_touch(idx: int, pressed: bool, pos: Vector2) -> InputEventScreenTouch:
+	var e := InputEventScreenTouch.new()
+	e.index = idx
+	e.pressed = pressed
+	e.position = pos
+	return e
+
+
+func _mk_drag(idx: int, pos: Vector2) -> InputEventScreenDrag:
+	var e := InputEventScreenDrag.new()
+	e.index = idx
+	e.position = pos
+	return e
 
 
 # Flat terrain, same checker on slots 0 & 1 with different per-slot scale, paint

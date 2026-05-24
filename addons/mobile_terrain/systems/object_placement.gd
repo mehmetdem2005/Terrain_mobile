@@ -1,42 +1,40 @@
 @tool
-class_name TerrainObjectPlacer
+class_name TerrainObjectPlacement
 extends RefCounted
 
-## TerrainObjectPlacer — simple, self-contained object stamping.
+## TerrainObjectPlacement — discrete "tap the terrain, drop one object" stamping.
 ##
-## Replaces the old scatter system (the deleted `_scatter_foliage` /
-## `FoliageSystem`). Design goals, in priority order:
-##   1. ONE instance per call (no random scatter). The node gates calls by
-##      travel distance so a drag lays a spaced trail and a held finger
-##      places exactly one.
-##   2. ANY mesh works — including primitives created in the inspector
-##      (BoxMesh, etc.) that have NO resource_path. The old code rejected
-##      those, which is why "the cube never placed".
-##   3. Correct transform regardless of where the terrain node sits: the
-##      instance is built in world space, then mapped into the
-##      MultiMeshInstance3D's local space.
+## This is the placement MODULE: stateless helpers that own the geometry of a
+## single placement (which MultiMesh, the per-instance transform, the spacing
+## gate) but NOT the gesture lifecycle. The terrain node owns the registry +
+## the foliage_placed signal; the editor input router owns the press/drag/
+## release gesture. Keeping this layer stateless is what makes the placement
+## math unit-testable under --headless (the dummy RenderingServer never stores
+## MultiMesh transforms, so place_one's buffer write is the only part that
+## needs the editor/visual harness).
 ##
-## State (the per-mesh MultiMeshInstance3D registry) lives on the node;
-## these are static helpers so the node keeps ownership of lifecycle. The
-## registry Dictionary is keyed by the Mesh resource itself — robust for
-## path-less meshes and free of the old "::sub_resource" path fragility.
+## Replaces the previous object_placer.gd. The behavioural fix that motivated
+## the rewrite lives in the input router (placement no longer rides the sculpt
+## stroke's is_sculpting/press-hit gate), but the module was re-cut alongside it
+## so the placement path is one coherent unit rather than helpers bolted onto
+## the sculpt brush.
 
 # Safety cap on instances per mesh: a runaway drag (tiny spacing, fast motion)
 # must not grow the MultiMesh buffer without bound and exhaust memory / overload
-# the GPU (a cause of the editor crash on heavy object painting).
+# the GPU (a cause of the editor stall on heavy object painting).
 const MAX_INSTANCES_PER_MESH := 8192
 
-# Upper clamp on per-instance scale. `object_scale` comes from an
-# @export_range that only constrains the inspector — direct/scripted
-# assignment is NOT bounded — so a stray huge value could otherwise produce a
-# kilometre-wide instance (degenerate basis, GPU stall). Matches the node's
-# export upper bound.
+# Upper clamp on per-instance scale. object_scale comes from an @export_range
+# that only constrains the inspector — direct/scripted assignment is NOT
+# bounded — so a stray huge value could otherwise produce a kilometre-wide
+# instance (degenerate basis, GPU stall). Matches the node's export bound.
 const MAX_OBJECT_SCALE := 100.0
 
 
 # Human-readable Scene-dock name fragment for a mesh. Tolerates path-less
-# meshes (inspector primitives) by falling back to resource_name, then the
-# class name ("BoxMesh"), so the node never ends up named "Assets_".
+# meshes (inspector primitives: BoxMesh, CapsuleMesh, ...) by falling back to
+# resource_name, then the class name, so the batch node is never named
+# "Assets_".
 static func mesh_label(mesh: Mesh) -> String:
 	if mesh == null:
 		return "Object"
@@ -47,10 +45,11 @@ static func mesh_label(mesh: Mesh) -> String:
 	return mesh.get_class()
 
 
-# Get (or lazily create) the MultiMeshInstance3D that batches `mesh`,
-# tracked in `registry` keyed by the Mesh resource. The child is runtime
-# only: it is deliberately NOT owner-promoted, so it never serialises into
-# the .tscn (placements persist via the terrain's .res object_slots).
+# Get (or lazily create) the MultiMeshInstance3D that batches `mesh`, tracked
+# in `registry` keyed by the Mesh resource itself (robust for path-less
+# inspector primitives, unlike the old "::sub_resource" path key). The child is
+# runtime-only — deliberately NOT owner-promoted — so it never serialises into
+# the .tscn; placements persist via the terrain's .res object_slots instead.
 static func get_or_create_mmi(
 	node: Node3D, mesh: Mesh, registry: Dictionary
 ) -> MultiMeshInstance3D:
@@ -77,8 +76,8 @@ static func get_or_create_mmi(
 
 # Decide whether a new dab at `new_pos` is far enough from the previous
 # placement to drop another instance. last_pos == Vector3.INF means "first
-# placement of this stroke" → always allowed. Held-still finger keeps
-# returning false, so exactly one object is placed.
+# placement of this gesture" → always allowed, so a single tap always drops
+# exactly one and a held-still finger does not pile up a stack.
 static func should_place(last_pos: Vector3, new_pos: Vector3, spacing: float) -> bool:
 	if last_pos == Vector3.INF:
 		return true
@@ -86,11 +85,9 @@ static func should_place(last_pos: Vector3, new_pos: Vector3, spacing: float) ->
 
 
 # PURE: build the per-instance Transform3D, in the MMI's LOCAL space, for an
-# object dropped at world-space `world_pos`. Kept free of MultiMesh state so
-# it is unit-testable under --headless (where the dummy RenderingServer does
-# not store instance transforms). `mmi_global_xform` is the MMI's
-# global_transform; passing it explicitly lets the math map world→local
-# without depending on scene-tree side effects.
+# object dropped at world-space `world_pos`. Kept free of MultiMesh state so it
+# is unit-testable under --headless. `mmi_global_xform` is passed explicitly so
+# the world→local map needs no scene-tree side effects.
 static func build_instance_transform(
 	world_pos: Vector3,
 	surface_normal: Vector3,
@@ -105,16 +102,17 @@ static func build_instance_transform(
 	s = minf(s, MAX_OBJECT_SCALE)
 	basis = basis.scaled(Vector3(s, s, s))
 	# Sit the mesh ON the surface: shift the origin up by the mesh's bottom (its
-	# AABB min-y) along the instance up-axis, so a centre-pivot mesh (sphere/box)
-	# doesn't sink half below the terrain ("altına giriyor").
+	# AABB min-y, already scaled because basis carries the scale) along the
+	# instance up-axis, so a centre-pivot mesh (sphere/box/capsule) doesn't sink
+	# half below the terrain.
 	var origin: Vector3 = world_pos + basis * Vector3(0.0, -mesh_min_y, 0.0)
 	var world_tf := Transform3D(basis, origin)
 	return mmi_global_xform.affine_inverse() * world_tf
 
 
-# Append exactly one instance to `mmi` at `world_pos`. Returns the new
-# instance index (== the previous instance_count), or -1 on bad input. The
-# index is handed back so the editor plugin can record it for undo.
+# Append exactly one instance to `mmi` at `world_pos`. Returns the new instance
+# index (== the previous instance_count), or -1 on bad input / cap hit. The
+# index is handed back so the editor can record it for undo.
 static func place_one(
 	mmi: MultiMeshInstance3D,
 	world_pos: Vector3,
@@ -144,11 +142,11 @@ static func place_one(
 	return idx
 
 
-# Orthonormal orientation basis. Upright (world Y up) by default so cubes
-# stand straight; aligned to the surface normal when align_to_normal is on
-# (objects tilt to follow slopes). Optional uniform-random yaw around the up
-# axis. Always orthonormal — never produces the degenerate/NaN basis that
-# renders as a stretched spike.
+# Orthonormal orientation basis. Upright (world Y up) by default so cubes /
+# capsules stand straight; aligned to the surface normal when align_to_normal
+# is on (objects tilt to follow slopes). Optional uniform-random yaw around the
+# up axis. Always orthonormal — never the degenerate/NaN basis that renders as
+# a stretched spike.
 static func _orientation_basis(
 	surface_normal: Vector3, align_to_normal: bool, random_yaw: bool
 ) -> Basis:

@@ -1,14 +1,14 @@
 @tool
 extends SceneTree
 
-# Unit test for TerrainObjectPlacer (systems/object_placer.gd).
+# Unit test for TerrainObjectPlacement (systems/object_placement.gd).
 #
 # Covers the PURE logic only — build_instance_transform, should_place,
 # mesh_label — so it runs under --headless, where the dummy RenderingServer
 # does not store MultiMesh instance transforms (place_one's actual buffer
 # write is exercised by the visual test render_object_persistence.gd).
 
-const Placer := preload("res://addons/mobile_terrain/systems/object_placer.gd")
+const Placement := preload("res://addons/mobile_terrain/systems/object_placement.gd")
 
 var _failed: int = 0
 
@@ -24,10 +24,10 @@ func _init() -> void:
 	_test_should_place()
 	_test_mesh_label()
 	if _failed == 0:
-		print("OBJECT_PLACER_TEST_OK")
+		print("OBJECT_PLACEMENT_TEST_OK")
 		quit(0)
 	else:
-		printerr("OBJECT_PLACER_TEST_FAILED: %d failure(s)" % _failed)
+		printerr("OBJECT_PLACEMENT_TEST_FAILED: %d failure(s)" % _failed)
 		quit(1)
 
 
@@ -39,7 +39,7 @@ func _check(cond: bool, msg: String) -> void:
 
 # Identity MMI transform → the instance origin equals the world hit point.
 func _test_origin_is_world() -> void:
-	var tf := Placer.build_instance_transform(
+	var tf := Placement.build_instance_transform(
 		Vector3(5, 3, 7), Vector3.UP, 1.0, false, false, Transform3D.IDENTITY
 	)
 	_check(tf.origin.is_equal_approx(Vector3(5, 3, 7)), "origin world (got %s)" % tf.origin)
@@ -50,7 +50,7 @@ func _test_origin_is_world() -> void:
 # terrain node is not at the world origin.
 func _test_world_to_local() -> void:
 	var mmi_xform := Transform3D(Basis(), Vector3(10, 0, 0))
-	var tf := Placer.build_instance_transform(
+	var tf := Placement.build_instance_transform(
 		Vector3(5, 3, 7), Vector3.UP, 1.0, false, false, mmi_xform
 	)
 	_check(tf.origin.is_equal_approx(Vector3(-5, 3, 7)), "world->local origin (got %s)" % tf.origin)
@@ -58,7 +58,7 @@ func _test_world_to_local() -> void:
 
 # object_scale applies a uniform scale to the instance basis.
 func _test_scale_applied() -> void:
-	var tf := Placer.build_instance_transform(
+	var tf := Placement.build_instance_transform(
 		Vector3.ZERO, Vector3.UP, 0.5, false, false, Transform3D.IDENTITY
 	)
 	var s := tf.basis.get_scale()
@@ -68,18 +68,18 @@ func _test_scale_applied() -> void:
 # C1 hardening: an out-of-range object_scale is clamped to MAX_OBJECT_SCALE so a
 # stray scripted/inspector value can't produce a kilometre-wide instance.
 func _test_scale_clamped() -> void:
-	var tf := Placer.build_instance_transform(
+	var tf := Placement.build_instance_transform(
 		Vector3.ZERO, Vector3.UP, 1.0e6, false, false, Transform3D.IDENTITY
 	)
 	var s := tf.basis.get_scale()
-	var cap: float = Placer.MAX_OBJECT_SCALE
+	var cap: float = Placement.MAX_OBJECT_SCALE
 	_check(s.is_equal_approx(Vector3(cap, cap, cap)), "scale clamped to %s (got %s)" % [cap, s])
 
 
 # A degenerate (zero) normal must never produce a NaN basis — that was the
 # "stretched spike radiating from a point" failure mode.
 func _test_no_nan_zero_normal() -> void:
-	var tf := Placer.build_instance_transform(
+	var tf := Placement.build_instance_transform(
 		Vector3(1, 2, 3), Vector3.ZERO, 1.0, true, false, Transform3D.IDENTITY
 	)
 	var ok := true
@@ -92,7 +92,7 @@ func _test_no_nan_zero_normal() -> void:
 # align_to_normal: the instance up axis matches the surface normal.
 func _test_align_to_normal() -> void:
 	var n := Vector3(0.3, 0.9, 0.1).normalized()
-	var tf := Placer.build_instance_transform(
+	var tf := Placement.build_instance_transform(
 		Vector3.ZERO, n, 1.0, true, false, Transform3D.IDENTITY
 	)
 	var up := tf.basis.y.normalized()
@@ -102,7 +102,7 @@ func _test_align_to_normal() -> void:
 # TKT-016: a centre-pivot mesh (AABB min-y = -2) is lifted by 2 so its bottom
 # sits on the surface — fixes objects sinking half below the terrain.
 func _test_surface_offset() -> void:
-	var tf := Placer.build_instance_transform(
+	var tf := Placement.build_instance_transform(
 		Vector3.ZERO, Vector3.UP, 1.0, false, false, Transform3D.IDENTITY, -2.0
 	)
 	_check(tf.origin.is_equal_approx(Vector3(0, 2, 0)), "surface offset lift (got %s)" % tf.origin)
@@ -110,20 +110,23 @@ func _test_surface_offset() -> void:
 
 func _test_should_place() -> void:
 	_check(
-		Placer.should_place(Vector3.INF, Vector3(1, 1, 1), 2.0), "first placement always allowed"
+		Placement.should_place(Vector3.INF, Vector3(1, 1, 1), 2.0), "first placement always allowed"
 	)
-	_check(not Placer.should_place(Vector3.ZERO, Vector3(1, 0, 0), 2.0), "within spacing rejected")
-	_check(Placer.should_place(Vector3.ZERO, Vector3(3, 0, 0), 2.0), "beyond spacing allowed")
+	_check(
+		not Placement.should_place(Vector3.ZERO, Vector3(1, 0, 0), 2.0), "within spacing rejected"
+	)
+	_check(Placement.should_place(Vector3.ZERO, Vector3(3, 0, 0), 2.0), "beyond spacing allowed")
 
 
 func _test_mesh_label() -> void:
 	var box := BoxMesh.new()
 	_check(
-		Placer.mesh_label(box) == "BoxMesh",
-		"path-less label -> class (got %s)" % Placer.mesh_label(box)
+		Placement.mesh_label(box) == "BoxMesh",
+		"path-less label -> class (got %s)" % Placement.mesh_label(box)
 	)
 	box.resource_name = "Crate"
 	_check(
-		Placer.mesh_label(box) == "Crate", "resource_name label (got %s)" % Placer.mesh_label(box)
+		Placement.mesh_label(box) == "Crate",
+		"resource_name label (got %s)" % Placement.mesh_label(box)
 	)
-	_check(Placer.mesh_label(null) == "Object", "null mesh label")
+	_check(Placement.mesh_label(null) == "Object", "null mesh label")

@@ -59,9 +59,9 @@ echo "==> 9/14 heightmap io unit test (TKT-003 Phase A.2 extraction)"
 godot --headless --script unit_tests/test_heightmap_io.gd 2>&1 | tee /tmp/heightmap_io.log
 grep -q "^HEIGHTMAP_IO_TEST_OK" /tmp/heightmap_io.log
 
-echo "==> object placer unit test (transform + spacing logic)"
-godot --headless --script unit_tests/test_object_placer.gd 2>&1 | tee /tmp/object_placer.log
-grep -q "^OBJECT_PLACER_TEST_OK" /tmp/object_placer.log
+echo "==> object placement unit test (transform + spacing logic)"
+godot --headless --script unit_tests/test_object_placement.gd 2>&1 | tee /tmp/object_placement.log
+grep -q "^OBJECT_PLACEMENT_TEST_OK" /tmp/object_placement.log
 
 echo "==> input router unit test (touch + mouse stroke routing)"
 godot --headless --script unit_tests/test_input_router.gd 2>&1 | tee /tmp/input_router.log
