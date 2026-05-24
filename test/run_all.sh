@@ -87,9 +87,13 @@ echo "==> 13/14 user-reported fixes (TKT-006/007 externalize + map_size adapt + 
 godot --headless --script unit_tests/test_user_fixes.gd 2>&1 | tee /tmp/user_fixes.log
 grep -q "^USER_FIXES_TEST_OK" /tmp/user_fixes.log
 
-echo "==> 14/14 undo recorder unit test (TKT-009 Phase B.2 extraction)"
+echo "==> 14/15 undo recorder unit test (TKT-009 Phase B.2 extraction)"
 godot --headless --script unit_tests/test_undo_recorder.gd 2>&1 | tee /tmp/undo_recorder.log
 grep -q "^UNDO_RECORDER_TEST_OK" /tmp/undo_recorder.log
+
+echo "==> 15/15 editor LOD seed unit test (load-spike fix: update_chunk_mesh honours seeded _chunk_lod)"
+godot --headless --script unit_tests/test_editor_lod_seed.gd 2>&1 | tee /tmp/editor_lod_seed.log
+grep -q "^EDITOR_LOD_SEED_OK" /tmp/editor_lod_seed.log
 
 echo
 echo "ALL TESTS PASSED"

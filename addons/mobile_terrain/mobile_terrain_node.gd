@@ -210,6 +210,15 @@ var dirty_chunks: Dictionary = {}
 var _chunk_lod: Dictionary = {}
 var _lod_accum: float = 0.0
 var _last_lod_cam_pos: Vector3 = Vector3.INF
+# Editor load-spike fix: when initialize_terrain creates chunks deferred (large
+# map) in the editor, the dirty drain is HELD until _update_editor_lod has
+# populated _chunk_lod at least once — otherwise every chunk would mesh at the
+# default full-res stride before LOD reduces it, a transient whole-map full-res
+# spike that OOM-crashes the editor on big maps. _lod_held_frames bounds the
+# wait so a missing editor camera can't strand the terrain unbuilt. Both stay
+# false/0 at runtime (the flag is only set under is_editor_hint).
+var _lod_needs_seed: bool = false
+var _lod_held_frames: int = 0
 var last_sculpt_pos: Vector3 = Vector3.INF
 var last_placement_pos: Vector3 = Vector3.INF
 var splatmap_data: PackedByteArray
@@ -1184,7 +1193,39 @@ func _process(delta: float):
 	# renders blank in the running game. The throttle is just as relevant
 	# at runtime (we don't want a 1500-chunk freeze on level load), so
 	# the queue should drain regardless of editor mode.
-	if dirty_chunks.size() > 0:
+	# Editor distance LOD runs BEFORE the dirty drain so far chunks build coarse
+	# (down to a single quad) from their FIRST mesh — never a transient
+	# whole-map full-res spike that OOM-crashes the editor on large maps.
+	# Runtime keeps _lod_needs_seed false (set only under is_editor_hint), so
+	# this whole block is skipped and the drain below runs exactly as before.
+	if editor_lod_enabled and Engine.is_editor_hint():
+		_lod_accum += delta
+		if _lod_needs_seed:
+			# First seed after a (re)build: force past the 0.15s throttle AND
+			# the camera-movement early-out. Releases the drain hold only once
+			# the editor camera is available and _chunk_lod is populated.
+			_lod_held_frames += 1
+			if _update_editor_lod(true):
+				_lod_needs_seed = false
+				_lod_accum = 0.0
+				_lod_held_frames = 0
+			elif _lod_held_frames > 30:
+				# Editor camera never appeared; seed every chunk to the
+				# coarsest stride so the terrain still shows (one quad per
+				# chunk) instead of staying blank — never a full-res spike.
+				# The normal throttled pass refines once a camera exists.
+				for key in chunks.keys():
+					_chunk_lod[key] = chunk_size
+				_lod_needs_seed = false
+				_lod_held_frames = 0
+		elif _lod_accum >= TerrainConstants.EDITOR_LOD_UPDATE_INTERVAL:
+			_lod_accum = 0.0
+			_update_editor_lod()
+
+	# Drain the per-chunk mesh rebuild queue. HELD in the editor only while LOD
+	# still needs its first seed (above), so no chunk is ever meshed at the
+	# default full-res stride before its LOD is known.
+	if dirty_chunks.size() > 0 and not _lod_needs_seed:
 		# V21 PERFORMANCE: per-frame chunk meshing budget.
 		#
 		# Previously hard-coded to 4 chunks per frame, tuned for interactive
@@ -1224,15 +1265,6 @@ func _process(delta: float):
 				break
 		for k in keys_to_remove:
 			dirty_chunks.erase(k)
-
-	# Editor-only distance LOD: collapse far chunks so a bird's-eye / whole-world
-	# view can't choke the editor. Throttled; marks LOD-changed chunks dirty and
-	# lets the budgeted drain above rebuild them over subsequent frames.
-	if editor_lod_enabled and Engine.is_editor_hint():
-		_lod_accum += delta
-		if _lod_accum >= TerrainConstants.EDITOR_LOD_UPDATE_INTERVAL:
-			_lod_accum = 0.0
-			_update_editor_lod()
 
 
 func initialize_terrain():
@@ -1336,6 +1368,13 @@ func initialize_terrain():
 	# V22 Phase 4: use centralised constant. Old local const removed.
 	var total_chunks: int = num_chunks * num_chunks
 	var build_sync: bool = total_chunks <= TerrainConstants.SYNC_BUILD_CHUNK_LIMIT
+	# Editor load-spike fix: for deferred (large-map) builds, hold the dirty
+	# drain until the LOD pass seeds _chunk_lod, so far chunks build coarse from
+	# their FIRST mesh instead of full-res-then-collapse. Re-set on every
+	# (re-entrant) rebuild; the _chunk_lod.clear() above keeps it consistent with
+	# the final chunk set. Runtime and small (sync) maps leave it false.
+	if not build_sync and editor_lod_enabled and Engine.is_editor_hint():
+		_lod_needs_seed = true
 	for cz in range(num_chunks):
 		for cx in range(num_chunks):
 			_create_chunk(cx, cz, build_sync)
@@ -1412,16 +1451,20 @@ func update_chunk_mesh(cx: int, cz: int):
 # distance and mark any whose stride changed dirty. The budgeted drain in
 # _process rebuilds them over subsequent frames, so a sudden zoom-to-bird's-eye
 # collapses far chunks progressively instead of meshing the whole world at full
-# resolution in one frame. No-ops safely if the editor camera isn't available.
-func _update_editor_lod() -> void:
+# resolution in one frame. Returns true once LOD state is valid for the current
+# camera (used to release the load-time seed hold), false if there are no chunks
+# or the editor camera isn't available yet. `force` bypasses ONLY the
+# camera-movement early-out (not the camera-null guard), so the first seed runs
+# even when the camera hasn't moved since the terrain was (re)built.
+func _update_editor_lod(force: bool = false) -> bool:
 	if chunks.is_empty():
-		return
+		return false
 	var cam: Camera3D = _get_editor_camera()
 	if cam == null:
-		return
+		return false
 	var cam_pos: Vector3 = cam.global_transform.origin
-	if _last_lod_cam_pos.distance_to(cam_pos) < TerrainConstants.EDITOR_LOD_CAMERA_EPSILON:
-		return
+	if not force and _last_lod_cam_pos.distance_to(cam_pos) < TerrainConstants.EDITOR_LOD_CAMERA_EPSILON:
+		return true
 	_last_lod_cam_pos = cam_pos
 	var origin: Vector3 = global_transform.origin
 	var half: float = float(chunk_size) * 0.5
@@ -1433,6 +1476,7 @@ func _update_editor_lod() -> void:
 		if int(_chunk_lod.get(key, 1)) != step:
 			_chunk_lod[key] = step
 			dirty_chunks[key] = true
+	return true
 
 
 # Map a chunk-centre distance to a vertex stride. Band = how many (scaled)
