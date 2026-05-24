@@ -47,3 +47,13 @@ const SPLATMAP_SLOT_COUNT := 4  # RGBA8 → 4 channels
 # Auto-bump chunk size progression for large maps (chosen so map_size %
 # chunk_size == 0 stays valid for typical power-of-two map sizes).
 const AUTO_CHUNK_SIZE_LADDER: Array = [64, 128, 256, 512, 1024]
+
+# Editor-only distance LOD (mobile_terrain_node._update_editor_lod). Chunk-centre
+# distance (world units) thresholds; the LOD band = how many thresholds the
+# distance exceeds, and the vertex stride doubles per band (1,2,4,8,16,32...)
+# clamped to chunk_size. The farthest band collapses a whole chunk to a single
+# quad — "aşırı optimizasyon" so a bird's-eye view of the whole world can't
+# choke the editor. RUNTIME rendering is unaffected (LOD is is_editor_hint-gated).
+const EDITOR_LOD_DISTANCES: Array = [50.0, 110.0, 220.0, 420.0, 820.0]
+const EDITOR_LOD_UPDATE_INTERVAL := 0.15  # seconds between LOD re-evaluations
+const EDITOR_LOD_CAMERA_EPSILON := 4.0  # min editor-camera move (world units) to re-evaluate

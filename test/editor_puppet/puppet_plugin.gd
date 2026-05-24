@@ -14,6 +14,9 @@ extends EditorPlugin
 ##   "objects" (default) — sculpt hills, place spheres → mt_puppet_objects.png
 ##   "perslot"           — flat terrain, 2 slots different scale, paint slot 1
 ##                          → mt_puppet_perslot.png
+##   "lodseed"           — raise map_size with a far camera; assert the terrain
+##                          never meshes full-res on load → mt_puppet_lodseed.png
+##                          + MT_PUPPET_LODSEED_PASS/FAIL line
 ##
 ## Why a separate plugin (not a hook in mobile_terrain): keeps the shipping
 ## addon free of test code. It drives the terrain via the node's public methods
@@ -46,6 +49,8 @@ func _run() -> void:
 	match scenario:
 		"perslot":
 			await _scenario_perslot(terrain, vp)
+		"lodseed":
+			await _scenario_lodseed(terrain, vp)
 		_:
 			await _scenario_objects(terrain, vp)
 	get_tree().quit()
@@ -134,6 +139,52 @@ func _scenario_perslot(terrain, vp: Viewport) -> void:
 		cam.look_at_from_position(Vector3(32, 40, 66), Vector3(32, 0, 28), Vector3.UP)
 	await _frames(8)
 	_shot(vp, "mt_puppet_perslot")
+
+
+# Large-map load: prove the editor LOD seeds BEFORE the chunk build, so the
+# whole terrain never materialises at full resolution (the transient full-res
+# spike that OOM-closed the editor on big maps). Pull the camera far back, raise
+# map_size to a deferred-build size, then track the PEAK number of chunks that
+# are BOTH built (mesh != null) AND still at full-res stride 1. With the fix the
+# LOD pass populates _chunk_lod before any chunk meshes, so from a bird's-eye
+# distance ~every chunk builds coarse → peak ≈ 0. Without it the drain meshed
+# all chunks full-res first → peak ≈ every chunk.
+func _scenario_lodseed(terrain, vp: Viewport) -> void:
+	var stress_map := 1024
+	var c := float(stress_map) * 0.5
+	var cam := vp.get_camera_3d()
+	if cam != null:
+		# Bird's-eye, high above the map centre so every chunk falls in the
+		# farthest LOD band (collapses to one quad). Set BEFORE raising map_size
+		# so the very first LOD seed already sees the far camera.
+		cam.look_at_from_position(
+			Vector3(c, float(stress_map) * 1.5, c), Vector3(c, 0.0, c), Vector3.UP
+		)
+	await _frames(3)
+	terrain.map_size = stress_map  # triggers deferred build + the LOD seed hold
+	var peak_full_res := 0
+	var total := 0
+	for _i in range(80):
+		await get_tree().process_frame
+		var n1 := 0
+		for key in terrain.chunks:
+			var chunk = terrain.chunks[key]
+			if chunk != null and chunk.mesh != null and int(terrain._chunk_lod.get(key, 1)) == 1:
+				n1 += 1
+		if n1 > peak_full_res:
+			peak_full_res = n1
+		total = terrain.chunks.size()
+	_shot(vp, "mt_puppet_lodseed")
+	# A far bird's-eye view should leave ~zero full-res chunks; allow a small
+	# margin for any chunk near the look-at point. A high peak means the whole
+	# map meshed at full res on load — the OOM regression returning.
+	var verdict := "PASS" if peak_full_res <= 8 else "FAIL"
+	print(
+		(
+			"MT_PUPPET_LODSEED_%s: total_chunks=%d peak_full_res_built=%d (bound=8)"
+			% [verdict, total, peak_full_res]
+		)
+	)
 
 
 func _make_checker(size: int) -> ImageTexture:

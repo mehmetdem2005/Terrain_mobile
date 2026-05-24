@@ -36,10 +36,6 @@ var obj_list_vbox: VBoxContainer
 var _setting_sliders: Dictionary = {}  # prop_name -> HSlider
 var _setting_value_labels: Dictionary = {}  # prop_name -> Label
 var _setting_checks: Dictionary = {}  # prop_name -> CheckBox
-# TKT-018: which setting sliders are PER-SLOT (edit the selected paint slot's
-# array entry) vs global; plus the "which slot" label above the PBR sliders.
-var _per_slot_props: Dictionary = {}  # prop_name -> bool
-var _pbr_slot_label: Label
 # V21: track the "+" button so _refresh_manager_ui can disable it
 # when terrain_textures hits the 4-slot splatmap cap (see _add_texture_slot).
 var btn_add_tex: Button
@@ -543,6 +539,9 @@ func _build_main_ui():
 func _on_texture_slot_selected(idx: int):
 	if selected_node:
 		selected_node.current_paint_slot = idx
+		# Per-texture detailing: re-sync the PBR sliders to the newly selected
+		# paint slot so each texture shows/edits its own tiling/normal/rough/AO.
+		_refresh_settings_controls()
 
 
 func _on_object_slot_selected(idx: int):
@@ -990,17 +989,9 @@ func _build_settings_section(parent: Control) -> void:
 	title.add_theme_color_override("font_color", Color(0.85, 0.85, 1.0))
 	parent.add_child(title)
 
-	# TKT-018: these 4 are PER-SLOT — they edit the SELECTED paint slot's value
-	# (the channel you paint with). The label shows which slot is active.
-	_pbr_slot_label = Label.new()
-	_pbr_slot_label.add_theme_font_size_override("font_size", 10)
-	_pbr_slot_label.add_theme_color_override("font_color", Color(0.55, 0.8, 0.6))
-	parent.add_child(_pbr_slot_label)
-	_add_setting_slider(parent, "Doku Ölçeği", "texture_scale", 0.01, 4.0, 0.01, true)
-	_add_setting_slider(parent, "Normal Gücü", "normal_strength", 0.0, 2.0, 0.01, true)
-	_add_setting_slider(parent, "Pürüzlülük ×", "roughness_multiplier", 0.0, 2.0, 0.01, true)
-	_add_setting_slider(parent, "AO Gücü", "ao_strength", 0.0, 1.0, 0.01, true)
-
+	# Per-texture detailing (tiling / normal / roughness / AO) is now inline under
+	# each texture in the "Dokular" list — see _build_inline_pbr_slider. This
+	# section keeps only the GLOBAL knobs that apply to every slot at once.
 	_add_settings_subheader(parent, "  ─ Detaylandırma (tekrarı kır) ─")
 	_add_setting_slider(parent, "Varyasyon", "texture_variation", 0.0, 1.0, 0.01)
 	_add_setting_slider(parent, "Varyasyon Hücre", "texture_cell_size", 1.0, 50.0, 0.5)
@@ -1022,16 +1013,11 @@ func _add_settings_subheader(parent: Control, text: String) -> void:
 	parent.add_child(lbl)
 
 
-# One labelled slider row bound to node property `prop`. Dragging writes
+# One labelled GLOBAL slider row bound to node property `prop`. Dragging writes
 # selected_node.set(prop, value), firing the node's setter (and shader update).
+# Per-texture PBR is handled separately by _build_inline_pbr_slider.
 func _add_setting_slider(
-	parent: Control,
-	label_text: String,
-	prop: String,
-	mn: float,
-	mx: float,
-	step: float,
-	per_slot: bool = false
+	parent: Control, label_text: String, prop: String, mn: float, mx: float, step: float
 ) -> void:
 	var row := HBoxContainer.new()
 	var lbl := Label.new()
@@ -1053,29 +1039,56 @@ func _add_setting_slider(
 	slider.value_changed.connect(
 		func(v: float) -> void:
 			val.text = "%.2f" % v
-			if not is_instance_valid(selected_node):
-				return
-			if per_slot:
-				# Write into the SELECTED paint slot's array entry, then push.
-				var arr: Array = selected_node.get(prop)
-				var s := _pbr_slot()
-				if s >= 0 and s < arr.size():
-					arr[s] = v
-					selected_node._apply_pbr_per_slot()
-			else:
+			if is_instance_valid(selected_node):
 				selected_node.set(prop, v)
 	)
 	_setting_sliders[prop] = slider
 	_setting_value_labels[prop] = val
-	_per_slot_props[prop] = per_slot
 	parent.add_child(row)
 
 
-# The paint slot (0..3) the per-slot PBR sliders currently edit.
-func _pbr_slot() -> int:
-	if not is_instance_valid(selected_node):
-		return 0
-	return clampi(int(selected_node.current_paint_slot), 0, 3)
+# One inline PER-TEXTURE detailing slider, bound to selected_node.<prop>[slot_idx]
+# (this slot's own tiling / normal / roughness / AO). Lives under each texture
+# row in the "Dokular" list and is rebuilt with the current value on every
+# _refresh_manager_ui, so it needs no separate sync. Writes mutate the slot's
+# array entry in place and push to the shader via _apply_pbr_per_slot().
+func _build_inline_pbr_slider(
+	parent: Control, label_text: String, prop: String, mn: float, mx: float, step: float, slot_idx: int
+) -> void:
+	var arr: Array = selected_node.get(prop)
+	var cur: float = float(arr[slot_idx]) if slot_idx >= 0 and slot_idx < arr.size() else 1.0
+	var row := HBoxContainer.new()
+	var lbl := Label.new()
+	lbl.text = label_text
+	lbl.custom_minimum_size = Vector2(96, 0)
+	lbl.add_theme_font_size_override("font_size", 10)
+	lbl.add_theme_color_override("font_color", Color(0.6, 0.72, 0.78))
+	row.add_child(lbl)
+	var slider := HSlider.new()
+	slider.min_value = mn
+	slider.max_value = mx
+	slider.step = step
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	slider.set_value_no_signal(cur)
+	row.add_child(slider)
+	var val := Label.new()
+	val.custom_minimum_size = Vector2(40, 0)
+	val.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	val.add_theme_font_size_override("font_size", 10)
+	val.text = "%.2f" % cur
+	row.add_child(val)
+	slider.value_changed.connect(
+		func(v: float) -> void:
+			val.text = "%.2f" % v
+			if not is_instance_valid(selected_node):
+				return
+			var a: Array = selected_node.get(prop)
+			if slot_idx >= 0 and slot_idx < a.size():
+				a[slot_idx] = v
+				selected_node._apply_pbr_per_slot()
+	)
+	parent.add_child(row)
 
 
 func _add_setting_check(parent: Control, label_text: String, prop: String) -> void:
@@ -1095,16 +1108,8 @@ func _add_setting_check(parent: Control, label_text: String, prop: String) -> vo
 func _refresh_settings_controls() -> void:
 	if not is_instance_valid(selected_node):
 		return
-	var slot := _pbr_slot()
-	if _pbr_slot_label != null:
-		_pbr_slot_label.text = "  Seçili slot: %d (boyadığın kanalın ayarları)" % slot
 	for prop: String in _setting_sliders:
-		var v: float
-		if _per_slot_props.get(prop, false):
-			var arr: Array = selected_node.get(prop)
-			v = float(arr[slot]) if slot < arr.size() else 1.0
-		else:
-			v = float(selected_node.get(prop))
+		var v: float = float(selected_node.get(prop))
 		_setting_sliders[prop].set_value_no_signal(v)
 		_setting_value_labels[prop].text = "%.2f" % v
 	for prop: String in _setting_checks:
@@ -1191,6 +1196,21 @@ func _refresh_manager_ui():
 			slot_vbox, "Roughness", selected_node.terrain_roughness, i, _on_roughness_changed
 		)
 		_build_pbr_picker_row(slot_vbox, "AO", selected_node.terrain_ao, i, _on_ao_changed)
+
+		# Per-texture detailing: THIS slot's own tiling / normal / roughness / AO,
+		# edited inline so every texture carries its own look (moved here from the
+		# shared "Gelişmiş Ayarlar" section). Each writes selected_node.<prop>[i].
+		var det_lbl := Label.new()
+		det_lbl.text = "  Detaylar"
+		det_lbl.add_theme_font_size_override("font_size", 10)
+		det_lbl.add_theme_color_override("font_color", Color(0.55, 0.8, 0.6))
+		slot_vbox.add_child(det_lbl)
+		_build_inline_pbr_slider(slot_vbox, "Döşeme Sıklığı", "texture_scale", 0.01, 4.0, 0.01, i)
+		_build_inline_pbr_slider(slot_vbox, "Normal Gücü", "normal_strength", 0.0, 2.0, 0.01, i)
+		_build_inline_pbr_slider(
+			slot_vbox, "Pürüzlülük ×", "roughness_multiplier", 0.0, 2.0, 0.01, i
+		)
+		_build_inline_pbr_slider(slot_vbox, "AO Gücü", "ao_strength", 0.0, 1.0, 0.01, i)
 		# Height/Metallic/Emission are intentionally NOT exposed here: the mobile
 		# shader has no uniforms for them (the 17-sampler budget is full with
 		# splatmap + 16 albedo/normal/rough/AO), so panel pickers for them only
@@ -1521,23 +1541,31 @@ func _auto_detect_maps(slot_idx: int) -> void:
 	if detected.has("ao") and detected["ao"] != null:
 		selected_node.terrain_ao[slot_idx] = detected["ao"]
 		filled.append("AO: " + (detected["ao"] as Texture2D).resource_path)
-	# V21: extra storage slots — populate alongside the active maps so
-	# users don't have to manually wire _disp / _metal / _emit.
+	# V21: Height / Metallic / Emission are detected and STORED (so advanced
+	# users can wire a custom shader) but the mobile terrain shader has no
+	# uniforms for them — it only renders albedo / normal / roughness / AO.
+	# Track them separately from `filled` so we can tell the user they were
+	# saved-but-not-rendered, instead of silently storing dead maps.
+	var stored_unused: PackedStringArray = PackedStringArray()
 	if detected.has("height") and detected["height"] != null:
 		selected_node.terrain_height[slot_idx] = detected["height"]
-		filled.append("Height: " + (detected["height"] as Texture2D).resource_path)
+		stored_unused.append("Height")
 	if detected.has("metallic") and detected["metallic"] != null:
 		selected_node.terrain_metallic[slot_idx] = detected["metallic"]
-		filled.append("Metallic: " + (detected["metallic"] as Texture2D).resource_path)
+		stored_unused.append("Metallic")
 	if detected.has("emission") and detected["emission"] != null:
 		selected_node.terrain_emission[slot_idx] = detected["emission"]
-		filled.append("Emission: " + (detected["emission"] as Texture2D).resource_path)
+		stored_unused.append("Emission")
 
-	if filled.is_empty():
+	if filled.is_empty() and stored_unused.is_empty():
 		TerrainDiagnostics.warn(
 			TerrainDiagnostics.W_DETECT_NO_SIBLINGS, [slot_idx, albedo_path.get_file()]
 		)
 		return
+	if not stored_unused.is_empty():
+		TerrainDiagnostics.warn(
+			TerrainDiagnostics.W_DETECT_STORED_UNUSED, [slot_idx, ", ".join(stored_unused)]
+		)
 	selected_node.update_shader_textures()
 	_refresh_manager_ui()
 	_save_selected_scene()

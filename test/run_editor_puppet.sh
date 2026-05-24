@@ -25,8 +25,8 @@ PROJ="/tmp/mt_puppet_proj"
 TIMEOUT="${MT_PUPPET_TIMEOUT:-240}"
 
 case "$SCENARIO" in
-  objects|perslot) ;;
-  *) echo "ERROR: unknown scenario '$SCENARIO' (use 'objects' or 'perslot')"; exit 2 ;;
+  objects|perslot|lodseed) ;;
+  *) echo "ERROR: unknown scenario '$SCENARIO' (use 'objects', 'perslot' or 'lodseed')"; exit 2 ;;
 esac
 
 command -v xvfb-run >/dev/null 2>&1 || { echo "SKIP: xvfb-run not installed"; exit 0; }

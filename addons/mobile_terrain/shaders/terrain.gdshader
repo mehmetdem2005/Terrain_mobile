@@ -148,5 +148,8 @@ void fragment() {
 	float ao = ao0 * blend.r + ao1 * blend.g + ao2 * blend.b + ao3 * blend.a;
 	float ao_str = ao_strength_arr[0] * blend.r + ao_strength_arr[1] * blend.g + ao_strength_arr[2] * blend.b + ao_strength_arr[3] * blend.a;
 	AO = mix(1.0, ao, ao_str);
-	AO_LIGHT_AFFECT = 1.0;
+	// AO is an ambient/indirect occlusion term; letting it darken DIRECT light
+	// double-shadows the terrain and reads as "muddy". 0.0 = Godot default
+	// (AO affects ambient/GI only), which is the physically correct behaviour.
+	AO_LIGHT_AFFECT = 0.0;
 }
