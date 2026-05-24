@@ -6,6 +6,14 @@ extends Node3D
 	set = _set_map_size
 @export var chunk_size: int = 32:
 	set = _set_chunk_size
+# Editor-only distance LOD (see TerrainConstants.EDITOR_LOD_*). When true, the
+# node reduces far-chunk vertex density by 3D editor camera distance so
+# bird's-eye / whole-world views stay cheap. RUNTIME is unaffected (gated on
+# Engine.is_editor_hint()). Disable to always mesh at full resolution.
+@export var editor_lod_enabled: bool = true
+# Scales the LOD distance bands. >1 keeps detail farther out (big terrains);
+# <1 is more aggressive (collapses sooner).
+@export var editor_lod_distance_scale: float = 1.0
 @export var terrain_material: Material:
 	set = _set_material
 # Path to this terrain's companion .res under res://terrain_data/, bound
@@ -196,6 +204,12 @@ var _brush_mask_image: Image = null
 var chunks: Dictionary = {}
 var multimesh_instances: Dictionary = {}
 var dirty_chunks: Dictionary = {}
+# Editor-only LOD state (see _update_editor_lod). _chunk_lod maps a chunk coord
+# to its current vertex stride; empty at runtime (LOD is editor-only) so chunks
+# always mesh at full resolution outside the editor.
+var _chunk_lod: Dictionary = {}
+var _lod_accum: float = 0.0
+var _last_lod_cam_pos: Vector3 = Vector3.INF
 var last_sculpt_pos: Vector3 = Vector3.INF
 var last_placement_pos: Vector3 = Vector3.INF
 var splatmap_data: PackedByteArray
@@ -1162,7 +1176,7 @@ func get_height(x: int, z: int) -> float:
 	return height_data[z * map_size + x]
 
 
-func _process(_delta: float):
+func _process(delta: float):
 	# V21 CRITICAL FIX: removed the Engine.is_editor_hint() gate.
 	# Originally only editor-hint flushed the dirty queue, so at runtime
 	# a large map (>256 chunks) would be created via _create_chunk(
@@ -1211,6 +1225,15 @@ func _process(_delta: float):
 		for k in keys_to_remove:
 			dirty_chunks.erase(k)
 
+	# Editor-only distance LOD: collapse far chunks so a bird's-eye / whole-world
+	# view can't choke the editor. Throttled; marks LOD-changed chunks dirty and
+	# lets the budgeted drain above rebuild them over subsequent frames.
+	if editor_lod_enabled and Engine.is_editor_hint():
+		_lod_accum += delta
+		if _lod_accum >= TerrainConstants.EDITOR_LOD_UPDATE_INTERVAL:
+			_lod_accum = 0.0
+			_update_editor_lod()
+
 
 func initialize_terrain():
 	# V22 FIX (audit-chunk-map-size-mid-rebuild): re-entrancy guard. If a
@@ -1221,6 +1244,9 @@ func initialize_terrain():
 	if _rebuilding_terrain:
 		return
 	_rebuilding_terrain = true
+	# Drop stale per-chunk LOD before the chunk set is rebuilt so new chunks
+	# start at full resolution; the editor LOD pass re-applies within a frame.
+	_chunk_lod.clear()
 	# V22: linear adaptive budget (audit-chunk-budget). Old formula had a
 	# [17..32] stall zone where budget stayed at 4 despite a growing queue.
 	# Drained here in initialize_terrain via the _process loop; see below.
@@ -1368,13 +1394,76 @@ func update_chunk_mesh(cx: int, cz: int):
 	# (pure, headless-testable). This function keeps responsibility for the
 	# chunk dictionary lookup, MeshInstance assignment and positioning; the
 	# vertex/normal/uv/tangent/index build lives in ChunkRenderer.
-	var amesh: ArrayMesh = ChunkRenderer.build_chunk_mesh(height_data, map_size, chunk_size, cx, cz)
+	# Editor LOD: build at this chunk's current vertex stride (1 == full res;
+	# always 1 at runtime since _chunk_lod is only populated in the editor).
+	var step: int = _chunk_lod.get(Vector2i(cx, cz), 1)
+	var amesh: ArrayMesh = ChunkRenderer.build_chunk_mesh(
+		height_data, map_size, chunk_size, cx, cz, step
+	)
 	if amesh == null:
 		return
 	var start_x = cx * chunk_size
 	var start_z = cz * chunk_size
 	chunk.mesh = amesh
 	chunk.position = Vector3(start_x, 0, start_z)
+
+
+# Editor-only: re-evaluate every chunk's LOD against the 3D editor camera
+# distance and mark any whose stride changed dirty. The budgeted drain in
+# _process rebuilds them over subsequent frames, so a sudden zoom-to-bird's-eye
+# collapses far chunks progressively instead of meshing the whole world at full
+# resolution in one frame. No-ops safely if the editor camera isn't available.
+func _update_editor_lod() -> void:
+	if chunks.is_empty():
+		return
+	var cam: Camera3D = _get_editor_camera()
+	if cam == null:
+		return
+	var cam_pos: Vector3 = cam.global_transform.origin
+	if _last_lod_cam_pos.distance_to(cam_pos) < TerrainConstants.EDITOR_LOD_CAMERA_EPSILON:
+		return
+	_last_lod_cam_pos = cam_pos
+	var origin: Vector3 = global_transform.origin
+	var half: float = float(chunk_size) * 0.5
+	for key in chunks.keys():
+		var centre: Vector3 = origin + Vector3(
+			float(key.x) * chunk_size + half, 0.0, float(key.y) * chunk_size + half
+		)
+		var step: int = _lod_step_for_distance(cam_pos.distance_to(centre))
+		if int(_chunk_lod.get(key, 1)) != step:
+			_chunk_lod[key] = step
+			dirty_chunks[key] = true
+
+
+# Map a chunk-centre distance to a vertex stride. Band = how many (scaled)
+# distance thresholds the distance clears; stride doubles per band, clamped to
+# chunk_size (the coarsest band → a single quad per chunk).
+func _lod_step_for_distance(dist: float) -> int:
+	var band: int = 0
+	var scale: float = maxf(0.01, editor_lod_distance_scale)
+	for threshold in TerrainConstants.EDITOR_LOD_DISTANCES:
+		if dist >= float(threshold) * scale:
+			band += 1
+		else:
+			break
+	return clampi(1 << band, 1, chunk_size)
+
+
+# The 3D editor viewport's camera, or null outside the editor / when the
+# EditorInterface singleton or viewport isn't available. Uses the string
+# singleton lookup so the symbol resolves cleanly in exported runtime builds.
+func _get_editor_camera() -> Camera3D:
+	if not Engine.is_editor_hint():
+		return null
+	if not Engine.has_singleton("EditorInterface"):
+		return null
+	var ei = Engine.get_singleton("EditorInterface")
+	if ei == null:
+		return null
+	var vp = ei.get_editor_viewport_3d(0)
+	if vp == null:
+		return null
+	return vp.get_camera_3d()
 
 
 # V20 FIX: Re-mesh every existing chunk from the current height_data.

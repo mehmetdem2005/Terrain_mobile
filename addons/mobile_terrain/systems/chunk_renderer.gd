@@ -36,27 +36,34 @@ extends RefCounted
 # 0..chunk_size. The node positions the MeshInstance at (cx*chunk_size, 0,
 # cz*chunk_size) so chunks tile in world space.
 static func build_chunk_mesh(
-	height_data: PackedFloat32Array, map_size: int, chunk_size: int, cx: int, cz: int
+	height_data: PackedFloat32Array, map_size: int, chunk_size: int, cx: int, cz: int, step: int = 1
 ) -> ArrayMesh:
 	if map_size <= 0 or chunk_size <= 0:
 		return null
 	if height_data.size() < map_size * map_size:
 		return null
 
+	# LOD decimation: `step` is the cell stride between sampled vertices.
+	# step==1 → full resolution (byte-identical to the pre-LOD path). step==2 →
+	# every other cell, etc. Clamped to [1, chunk_size]; the coarsest stride
+	# (== chunk_size) collapses the chunk to a single quad. Same-step neighbours
+	# stay seam-matched (shared edge vertex always sampled); different-step
+	# neighbours may crack — accepted for the editor's distance LOD.
+	step = clampi(step, 1, chunk_size)
+
 	var start_x: int = cx * chunk_size
 	var start_z: int = cz * chunk_size
-
-	# V20 FIX (#13): clip the outer edge of the last chunk in each axis so
-	# its outer vertex lands on index map_size-1 (valid height) rather than
-	# map_size (out of bounds → flat edge strip). Paired with the
-	# divisibility guard in the node's _set_map_size / _set_chunk_size.
 	var num_chunks: int = map_size / chunk_size
-	var vx_count_x: int = chunk_size + 1
-	var vx_count_z: int = chunk_size + 1
-	if cx == num_chunks - 1:
-		vx_count_x = chunk_size
-	if cz == num_chunks - 1:
-		vx_count_z = chunk_size
+	var max_idx: int = map_size - 1
+
+	# V20 FIX (#13) preserved: the last chunk per axis clips its outer vertex to
+	# map_size-1 (valid height) instead of map_size (out of bounds → flat edge
+	# strip). _axis_samples folds that clip into the LOD sample list so every
+	# stride handles it uniformly.
+	var xs: PackedInt32Array = _axis_samples(cx, num_chunks, chunk_size, step)
+	var zs: PackedInt32Array = _axis_samples(cz, num_chunks, chunk_size, step)
+	var vx_count_x: int = xs.size()
+	var vx_count_z: int = zs.size()
 
 	var vx_count: int = vx_count_x * vx_count_z
 	var vertices := PackedVector3Array()
@@ -67,17 +74,21 @@ static func build_chunk_mesh(
 	uvs.resize(vx_count)
 
 	var inv_uv_denom: float = 1.0 / float(max(1, map_size - 1))
-	var max_idx: int = map_size - 1
 	var vi: int = 0
-	for z in range(vx_count_z):
-		for x in range(vx_count_x):
-			var gx: int = start_x + x
-			var gz: int = start_z + z
+	for zi in range(vx_count_z):
+		var lz: int = zs[zi]
+		var gz: int = start_z + lz
+		for xi in range(vx_count_x):
+			var lx: int = xs[xi]
+			var gx: int = start_x + lx
 			var center_idx: int = gz * map_size + gx
 			var h: float = height_data[center_idx]
-			vertices[vi] = Vector3(x, h, z)
+			# Local cell offset is the vertex position so chunks still tile in
+			# world space; only the sample density changes with `step`.
+			vertices[vi] = Vector3(lx, h, lz)
 			# Finite-difference normal with manual clamp (faster than a
-			# get_height() call at 2M+ invocations per full rebuild).
+			# get_height() call at 2M+ invocations per full rebuild). Uses the
+			# full-res ±1 neighbours so lighting stays sane even at coarse LOD.
 			var nx_l: int = gx - 1 if gx > 0 else 0
 			var nx_r: int = gx + 1 if gx < max_idx else max_idx
 			var nz_d: int = gz - 1 if gz > 0 else 0
@@ -133,3 +144,23 @@ static func build_chunk_mesh(
 	var amesh := ArrayMesh.new()
 	amesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return amesh
+
+
+# Local cell offsets sampled along one axis for the chunk at grid coord `c`.
+# All chunks except the last include the shared edge vertex at local==chunk_size
+# (so same-step neighbours tile seamlessly); the last chunk clips to
+# chunk_size-1 so its outer vertex stays on a valid height index (no OOB / no
+# flat overhang). `step` is the stride between interior samples; the edge vertex
+# is always appended so the chunk fully spans its cells at any LOD. Works for any
+# step (need not divide chunk_size) — non-dividing strides just yield a slightly
+# narrower final quad.
+static func _axis_samples(c: int, num_chunks: int, chunk_size: int, step: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var is_last: bool = c == num_chunks - 1
+	var edge: int = chunk_size - 1 if is_last else chunk_size
+	var p: int = 0
+	while p < edge:
+		out.append(p)
+		p += step
+	out.append(edge)
+	return out

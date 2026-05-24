@@ -543,6 +543,9 @@ func _build_main_ui():
 func _on_texture_slot_selected(idx: int):
 	if selected_node:
 		selected_node.current_paint_slot = idx
+		# Per-texture detailing: re-sync the PBR sliders to the newly selected
+		# paint slot so each texture shows/edits its own tiling/normal/rough/AO.
+		_refresh_settings_controls()
 
 
 func _on_object_slot_selected(idx: int):
