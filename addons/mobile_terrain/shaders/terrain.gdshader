@@ -54,6 +54,33 @@ float _mt_hash(vec2 p) {
 	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 }
 
+// Smooth value noise in [0,1] (bilinear-blended hashed lattice). Used to warp
+// UVs CONTINUOUSLY so texture tiling is broken without introducing seams.
+float _mt_vnoise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	float a = _mt_hash(i);
+	float b = _mt_hash(i + vec2(1.0, 0.0));
+	float c = _mt_hash(i + vec2(0.0, 1.0));
+	float d = _mt_hash(i + vec2(1.0, 1.0));
+	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// Continuous (seam-free) domain warp for the "Varyasyon" shift. Displaces the
+// sampling UV by a smooth noise field so tiling repetition is broken without any
+// hard cell borders. `cell_uv` sets the warp wavelength (one cell).
+vec2 _mt_warp_uv(vec2 uv, float cell_uv) {
+	if (texture_variation < 0.001) {
+		return uv;
+	}
+	vec2 wp = uv / cell_uv;
+	vec2 warp = vec2(
+		_mt_vnoise(wp) - 0.5,
+		_mt_vnoise(wp + vec2(37.2, 17.9)) - 0.5);
+	return uv + warp * cell_uv * texture_variation;
+}
+
 vec2 _mt_rotate_uv_around(vec2 uv, vec2 centre, float angle) {
 	float c = cos(angle);
 	float s = sin(angle);
@@ -61,30 +88,71 @@ vec2 _mt_rotate_uv_around(vec2 uv, vec2 centre, float angle) {
 	return centre + vec2(c * d.x - s * d.y, s * d.x + c * d.y);
 }
 
+// One texture-bombing tap: sample `s` with `uv` rotated around `cell`'s centre
+// by that cell's random angle. The caller bilinearly blends the 2x2 neighbour
+// taps so per-cell rotation cross-fades instead of hard-seaming at cell borders.
+vec3 _mt_bomb(sampler2D s, vec2 uv, vec2 cell, float cell_uv) {
+	float angle = _mt_hash(cell) * 6.28318530718 * rotation_jitter;
+	vec2 centre = (cell + 0.5) * cell_uv;
+	return texture(s, _mt_rotate_uv_around(uv, centre, angle)).rgb;
+}
+
+// Single varied sample of map `s`. `uv` is the slot's tiled UV (wpos*scale),
+// `scale` converts UV<->world. Applies, both SEAM-FREE: (1) a continuous domain
+// warp for the "Varyasyon" shift, then (2) "Rotasyon Jitter" as a 2x2 cell
+// texture-bombing blend. Per-cell TONE is albedo-only (see _mt_tone()).
 vec3 _mt_sample_var(sampler2D s, vec2 uv, float scale) {
 	if (texture_variation < 0.001 && rotation_jitter < 0.001) {
 		return texture(s, uv).rgb;
 	}
-	vec2 world_uv = uv / max(scale, 0.0001);
-	vec2 cell = floor(world_uv / max(texture_cell_size, 0.5));
-	float h1 = _mt_hash(cell);
-	float h_rot = _mt_hash(cell + vec2(17.0, 31.0));
+	float cell_uv = max(texture_cell_size * scale, 0.0001);
 
-	vec2 sample_uv = uv;
-	if (rotation_jitter > 0.001) {
-		float angle = h_rot * 6.28318 * rotation_jitter;
-		vec2 cell_centre_uv = (cell + 0.5) * texture_cell_size * scale;
-		sample_uv = _mt_rotate_uv_around(sample_uv, cell_centre_uv, angle);
+	// (1) Variation shift: continuous warp (no seams).
+	vec2 warped = _mt_warp_uv(uv, cell_uv);
+
+	if (rotation_jitter < 0.001) {
+		return texture(s, warped).rgb;
 	}
 
-	vec3 base = texture(s, sample_uv).rgb;
-	if (texture_variation < 0.001) return base;
+	// (2) Rotation jitter: bilinear blend of the 4 cells whose centres surround
+	// this point (centre-aligned via cs - 0.5). Each contributes its own rotated
+	// sample, so rotations cross-fade -> no hard seams.
+	vec2 cs = warped / cell_uv - 0.5;
+	vec2 cell = floor(cs);
+	vec2 f = fract(cs);
+	vec2 w = f * f * (3.0 - 2.0 * f);
+	vec3 c00 = _mt_bomb(s, warped, cell + vec2(0.0, 0.0), cell_uv);
+	vec3 c10 = _mt_bomb(s, warped, cell + vec2(1.0, 0.0), cell_uv);
+	vec3 c01 = _mt_bomb(s, warped, cell + vec2(0.0, 1.0), cell_uv);
+	vec3 c11 = _mt_bomb(s, warped, cell + vec2(1.0, 1.0), cell_uv);
+	return mix(mix(c00, c10, w.x), mix(c01, c11, w.x), w.y);
+}
 
-	vec2 offset = vec2(h1 * 17.3, fract(h1 * 31.7) * 23.1);
-	vec3 alt = texture(s, sample_uv + offset).rgb;
-	float h2 = _mt_hash(floor(world_uv / max(texture_cell_size * 1.7, 0.5)));
-	float blend = smoothstep(0.3, 0.7, h2) * texture_variation;
-	return mix(base, alt, blend);
+// Triplanar-axis sample: warp only. Rotation bombing is intentionally SKIPPED on
+// the triplanar (slope) path — triplanar already mixes three projections so tiling
+// seams read minimally there, and skipping the 4-tap bomb per axis keeps mobile
+// cost bounded when triplanar_blend and rotation_jitter are both enabled.
+vec3 _mt_sample_tri(sampler2D s, vec2 uv, float scale) {
+	if (texture_variation < 0.001) {
+		return texture(s, uv).rgb;
+	}
+	return texture(s, _mt_warp_uv(uv, max(texture_cell_size * scale, 0.0001))).rgb;
+}
+
+// Per-cell albedo TONE (brightness + slight tint) — the visible "blocks" of the
+// "Varyasyon" knob. Applied to FINAL albedo only so normal/roughness/AO stay
+// physically correct. Cell is world-space (scale-independent) -> blocks line up
+// across slots. Returns a multiplier (1.0 = no change when variation is 0).
+vec3 _mt_tone(vec2 world_xz) {
+	if (texture_variation < 0.001) {
+		return vec3(1.0);
+	}
+	vec2 cell = floor(world_xz / max(texture_cell_size, 0.5));
+	float hb = _mt_hash(cell + vec2(23.0, 7.0));
+	float ht = _mt_hash(cell + vec2(5.0, 41.0));
+	float bright = mix(1.0, 0.78 + hb * 0.44, texture_variation);
+	float t = (ht - 0.5) * 0.18 * texture_variation;
+	return vec3(bright) * vec3(1.0 + t, 1.0, 1.0 - t);
 }
 
 vec3 _mt_triplanar(sampler2D s, vec3 wpos, float scale) {
@@ -92,9 +160,9 @@ vec3 _mt_triplanar(sampler2D s, vec3 wpos, float scale) {
 	vec3 w = pow(abs(n), vec3(4.0));
 	w /= max(w.x + w.y + w.z, 0.0001);
 
-	vec3 xz = _mt_sample_var(s, wpos.xz * scale, scale);
-	vec3 xy = _mt_sample_var(s, wpos.xy * scale, scale);
-	vec3 yz = _mt_sample_var(s, wpos.zy * scale, scale);
+	vec3 xz = _mt_sample_tri(s, wpos.xz * scale, scale);
+	vec3 xy = _mt_sample_tri(s, wpos.xy * scale, scale);
+	vec3 yz = _mt_sample_tri(s, wpos.zy * scale, scale);
 	return xz * w.y + yz * w.x + xy * w.z;
 }
 
@@ -126,7 +194,7 @@ void fragment() {
 	vec3 c1 = _mt_slot_sample(tex_a_1, v_world_pos, tex_scale_arr[1]);
 	vec3 c2 = _mt_slot_sample(tex_a_2, v_world_pos, tex_scale_arr[2]);
 	vec3 c3 = _mt_slot_sample(tex_a_3, v_world_pos, tex_scale_arr[3]);
-	ALBEDO = c0 * blend.r + c1 * blend.g + c2 * blend.b + c3 * blend.a;
+	ALBEDO = (c0 * blend.r + c1 * blend.g + c2 * blend.b + c3 * blend.a) * _mt_tone(v_world_pos.xz);
 
 	vec3 n0 = _mt_slot_sample(tex_n_0, v_world_pos, tex_scale_arr[0]);
 	vec3 n1 = _mt_slot_sample(tex_n_1, v_world_pos, tex_scale_arr[1]);
