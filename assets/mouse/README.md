@@ -78,3 +78,14 @@ root. 4 bacakta 2-kemik IK + pole; `IK_hand/foot.L/R` üzerinde `ik_fk` (1=IK,
   0 bozuk-toplam
 - Bind==rest kanıtı: max 0.47 mm; glTF export max-4-influence kipinde,
   animasyonsuz
+
+## v8 — bölge-kurallı temizlik + dikişsiz döngü animasyonları
+- scripts/34_region_audit.py: kullanıcı spesifikasyonlu denetim/temizlik
+  (transform, grup<->kemik, >4 etki, toplam!=1, Clean+Limit4+Normalize,
+  bölge kuralları). Bulgular: pati 1651, karın 744, kuyruk-kökü 138 ihlal
+  temizlendi; SON: 0/0/0; rest 0.38mm. Orijinal korunarak _clean kopyası.
+- scripts/35_animations.py: idle_loop (120f) + walk_loop (32f, IK çapraz
+  yürüyüş). Tüm kanallar tam-periyotlu fonksiyon — SEAM kanıtı: her iki
+  döngüde kare1 vs kareN+1 evaluated-vertex farkı 0.0000 mm.
+- MouseRigged_anim.glb: iki döngü ayrı glTF animasyonu (NLA track),
+  max-4-influence. MouseRigged_clean.blend: animasyonsuz temiz taban.
