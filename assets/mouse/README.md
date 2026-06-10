@@ -1,33 +1,32 @@
-# MouseRigged — rig'li ev faresi
+# MouseRigged Pro — rig'li ev faresi (v2, profesyonel ağırlık pipeline'ı)
 
-Kaynak: `31b84266-housemouse3dmodel.glb` (Tripo AI üretimi, 55.580 vertex,
-4K BaseColor, **2.401 kopuk parça** — kürk kabuğu geometrisi).
-Rig: Blender 5.1.2 ile headless, tamamen scriptli (scriptler `/home/user/mouse_rig`
-oturum çalışma dizininde geliştirildi; üretim adımları aşağıda).
+Kaynak: `31b84266-housemouse3dmodel.glb` (Tripo AI, 55.580 vertex, 4K BaseColor,
+**2.401 kopuk kürk parçası**). Rig: Blender 5.1.2 headless, tamamen scriptli.
+
+## v2'de değişen (kullanıcı geri bildirimi: "kuyruk kayık, göğüs altı texture kayıyor")
+1. **Ağırlıklar — profesyonel pipeline:** elle mesafe-tabanlı ağırlıklar atıldı.
+   Yerine endüstri tekniği: mesh kopyası → **voxel remesh** (0.012) ile tek
+   su-geçirmez proxy (11.108 vertex) → proxy'de **bone-heat** (0 başarısız) →
+   **Data Transfer** (POLYINTERP_NEAREST) ile 55.580 kürk vertexine aktarım →
+   limit 4 + normalize → **Corrective Smooth** modifier.
+2. **Kuyruk yeniden:** merkez hattı, ark-merkezi etrafında deterministik
+   θ-parametrizasyonuyla çıkarıldı (greedy izin zikzakı bitti); 8 kemik,
+   taban (0.003, 0.411) → uç (0.256, 0.463), z sapması < 1 cm; tüm kemiklerde
+   `align_roll(Z-up)` → süpürme/kıvrılma eksenleri tutarlı.
+3. IK pole açıları yeni roll'lara göre yeniden sayısal kalibre edildi
+   (forearm.L 45°, forearm.R 90°, shin.L 120°, shin.R 90°).
 
 ## Dosyalar
-- `MouseRigged_final.blend` — ASIL teslim: tam rig (IK/FK, widget'lar, kısıtlar)
-- `MouseRigged_final.glb` — oyun motoru için: skin + bake'li `idle_test` animasyonu
-  (glTF kısıt/widget taşımaz; IK ile çalışmak için .blend kullanılır)
-- Render'lar: iskelet doğrulama, animasyon kareleri, texture yakın planı
+- `MouseRigged_pro.blend` — ASIL: tam rig (IK/FK anahtarlı, yuvarlak widget'lar)
+- `MouseRigged_pro.glb` — oyun motoru: skin + bake'li `idle_test` animasyonu
+- Render'lar: kuyruk süpürme/kıvrılma, göğüs altı yakın plan, animasyon karesi
 
 ## Rig içeriği
-- **Deform zinciri (26 kemik):** spine.01-03 → neck → head → snout, ear.L/R,
-  4 bacak (upper_arm/forearm/hand, thigh/shin/foot), tail.01-06, root
-- **IK:** 4 bacakta 2-kemik IK + sayısal kalibre pole hedefleri
-  (forearm.L 75°, forearm.R 90°, shin.L −165°, shin.R −30°)
-- **IK/FK anahtarı:** `IK_hand.L/R` ve `IK_foot.L/R` kontrol kemiklerinde
-  `ik_fk` özelliği (1=IK, 0=FK). FK modunda uzuv halkalarıyla döndürülür.
-- **Widget'lar (yuvarlaklar):** root yer halkası, omurga/boyun/baş/kuyruk dik
-  halkalar, ayaklarda yatay IK halkaları, pole'larda küre — hepsi `WGT`
-  koleksiyonunda (render'da gizli).
+28 deform kemiği (omurga 3, boyun, baş, burun, kulak ×2, bacak 4×3, kuyruk 8) +
+root. 4 bacakta 2-kemik IK + pole; `IK_hand/foot.L/R` üzerinde `ik_fk` (1=IK,
+0=FK). Widget'lar `WGT` koleksiyonunda (render'da gizli).
 
-## Skinning notu
-Mesh 2.401 kopuk kürk parçası olduğundan Blender bone-heat TÜM vertexlerde
-başarısız oldu; ağırlıklar mesafe-tabanlı özel çözücüyle hesaplandı
-(kemik-segment mesafesi, ters-kuvvet düşüş, vertex başına 3 kemik, 0 ağırlıksız).
-
-## Doğrulananlar
-- Kaynak GLB'de animasyon YOKTU (kontrol edildi; `idle_test` bu rig'le üretildi)
-- Texture: 4K BaseColor sağlam — rest + 8 poz + animasyon karelerinde kayma yok
-- IK: çökme pozunda 4 ayak yerde sabit; adım/uzanma pozları doğal
+## Doğrulama kanıtları
+- Kuyruk süpürme + yukarı kıvrılma: pürüzsüz spiral, texture takipte (render'lar)
+- Göğüs altı nefes + pati-kalkık yakın planlar: doku kayması yok
+- Çökmede 4 ayak IK ile yerde; kaynak GLB'de animasyon yoktu, `idle_test` eklendi
