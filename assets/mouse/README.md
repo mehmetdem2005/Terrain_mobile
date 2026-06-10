@@ -17,8 +17,8 @@ Kaynak: `31b84266-housemouse3dmodel.glb` (Tripo AI, 55.580 vertex, 4K BaseColor,
    (forearm.L 45°, forearm.R 90°, shin.L 120°, shin.R 90°).
 
 ## Dosyalar
-- `MouseRigged_pro3.blend` — ASIL: tam rig (IK/FK anahtarlı, yuvarlak widget'lar)
-- `MouseRigged_pro3.glb` — oyun motoru: skin + bake'li `idle_test` animasyonu
+- `MouseRigged_pro4.blend` — ASIL: tam rig (IK/FK anahtarlı, yuvarlak widget'lar)
+- `MouseRigged_pro4.glb` — oyun motoru: skin + bake'li `idle_test` animasyonu
 - Render'lar: kuyruk süpürme/kıvrılma, göğüs altı yakın plan, animasyon karesi
 
 ## Rig içeriği
@@ -45,3 +45,14 @@ root. 4 bacakta 2-kemik IK + pole; `IK_hand/foot.L/R` üzerinde `ik_fk` (1=IK,
 - Pati uçları parmak-yelpaze merkeziyle (PCA eksen ucu değil) hesaplandı
 - Ağırlıklar sıfırdan yeniden çözüldü (proxy bone-heat + transfer, 0 ağırlıksız)
 - IK pole yeniden kalibre (75/45/90/105°)
+
+## v5 (kürk-şeridi + taşma matematiksel doğrulama)
+- Yırtık yelpaze kök nedeni: tüy-şeridi vertexlerinin FARKLI kemiklere
+  bağlanması (en-yakın-yüzey aktarımının yan etkisi). Çözüm: 2.140 küçük
+  şeride kök-vertex ağırlığı tek blok verildi (kürk-kartı standardı);
+  261 büyük yüzey parçası per-vertex kaldı.
+- Kemik-içeride testi artık ışın-parite (3 eksen çoğunluk): kalça kökü
+  53 mm dışarıdaydı, içeri çekildi; tüm eklemler hacim içinde doğrulandı.
+- Corrective Smooth kaldırıldı: GLB modifier taşımaz, viewer ile blend
+  artık AYNI deformasyonu gösterir (önceki fark bundandı).
+- IK pole yeniden kalibre; idle pati hareketi yumuşatıldı.
