@@ -68,3 +68,13 @@ root. 4 bacakta 2-kemik IK + pole; `IK_hand/foot.L/R` üzerinde `ik_fk` (1=IK,
   hesaplandı, pole açıları 0.5° hassasiyetle tarandı (rest hatası 0.01-0.12mm).
 - SONUÇ: rest sapması max 0.4 mm (evaluated-vertex ölçümü) — model kendi
   şeklinde, hiçbir uzuv oynatılmadı. GLB animasyonsuz ihraç edildi.
+
+## v7 — tam skinning denetimi (kullanıcı checklist'i)
+- Transform apply: gereksiz (mesh+armature kimlik transformda)
+- Deform-dışı grup: yok; modifier sırası: tek Armature
+- STRAY weight taraması: 1.645 vertex'te >30cm öteden spine.03 etkisi
+  (bıyık uçları) bulundu ve temizlendi; +2 thigh.R
+- Clean(0.01) + Limit Total 4 + Normalize All: 0 ağırlıksız, 0 aşırı-etki,
+  0 bozuk-toplam
+- Bind==rest kanıtı: max 0.47 mm; glTF export max-4-influence kipinde,
+  animasyonsuz
