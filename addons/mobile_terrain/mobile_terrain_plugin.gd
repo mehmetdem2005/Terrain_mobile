@@ -197,6 +197,9 @@ func _create_brush_cursor() -> void:
 # cursor geometry without the user having to move their finger first.
 # Vector3.INF = "no hit yet, cursor isn't visible".
 var _last_brush_hit: Vector3 = Vector3.INF
+# TKT-010 B4: last decal-mesh rebuild timestamp; rebuilds are rate-capped to
+# TerrainConstants.CURSOR_CONFORM_INTERVAL_MSEC in _conform_brush_to_surface.
+var _cursor_conform_last_msec: int = 0
 
 
 func _attach_brush_cursor_to(target: Node) -> void:
@@ -2244,6 +2247,16 @@ func _conform_brush_to_surface(hit_point: Vector3):
 		return
 	_last_brush_hit = hit_point
 	brush_cursor.show()
+	# TKT-010 B4: rate-cap the mesh rebuild below (the bookkeeping above
+	# stays per-event so hit caching and visibility are never stale). Motion
+	# events arrive at OS rate (200+ Hz on touch); rebuilding 400 height
+	# samples + ~2.2k ImmediateMesh vertices per event starved mobile GPUs.
+	# Worst case after the LAST event of a gesture the decal lags one
+	# interval (~33 ms) — imperceptible against the 40 ms dab cadence.
+	var now_msec: int = Time.get_ticks_msec()
+	if now_msec - _cursor_conform_last_msec < TerrainConstants.CURSOR_CONFORM_INTERVAL_MSEC:
+		return
+	_cursor_conform_last_msec = now_msec
 	# Note: do NOT call _update_brush_visual_properties() here — it now
 	# calls back into this function (so slider drags repaint), which
 	# would create infinite recursion. All visual-property work

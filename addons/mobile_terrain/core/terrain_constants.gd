@@ -31,6 +31,24 @@ const TERRAIN_DATA_DIR := "res://terrain_data"
 const MIN_STATIONARY_INTERVAL := 0.04  # ~25 Hz cap for sculpt/paint
 const MIN_OBJECT_INTERVAL := 0.08  # ~12 Hz cap for foliage scatter
 
+# TKT-010 B2: paint dabs no longer upload the full splatmap texture to the
+# GPU per dab (6.5 MB at 1280² × 25 Hz ≈ 163 MB/s). In-stroke uploads are
+# coalesced in _process to at most one per this interval; end_stroke always
+# flushes, so nothing is ever lost. ~10 Hz visual feedback while painting.
+const SPLATMAP_UPLOAD_INTERVAL := 0.1
+
+# TKT-010 B4: the brush decal rebuild (400 height samples + ~2.2k
+# ImmediateMesh calls) used to run on EVERY mouse-motion event — at OS event
+# rates that is >100k RenderingServer calls/sec for the cursor alone. Rebuilds
+# are now rate-capped; ~30 Hz tracks the pointer imperceptibly.
+const CURSOR_CONFORM_INTERVAL_MSEC := 33
+
+# TKT-010 B5: while a mass rebuild is draining (undo force_update_all, EXR
+# import, map resize), the editor LOD pass must not pile a second dirty wave
+# on top of the first. Above this backlog the throttled LOD pass skips;
+# it resumes once the queue drains below it.
+const LOD_SKIP_DIRTY_THRESHOLD := 128
+
 # Brush slider clamps.
 const BRUSH_RADIUS_MIN := 1.0
 const BRUSH_RADIUS_MAX := 50.0

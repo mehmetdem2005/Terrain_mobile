@@ -139,18 +139,23 @@ static func place_one(
 	var idx: int = mm.instance_count
 	# CRITICAL: growing instance_count reallocates the transform buffer and
 	# CLEARS every existing instance (RenderingServer behaviour — any
-	# instance_count change wipes the buffer). So snapshot the current
-	# transforms, grow, then restore them before writing the new one. Without
-	# this, every placement reset all previously placed objects to the origin,
-	# so only the newest object stayed where it was tapped and the rest
-	# "disappeared" (collapsed onto world origin).
-	var kept: Array[Transform3D] = []
-	kept.resize(idx)
-	for i in range(idx):
-		kept[i] = mm.get_instance_transform(i)
+	# instance_count change wipes the buffer). Snapshot/restore via the raw
+	# float buffer: ONE read + ONE write regardless of instance count.
+	#
+	# TKT-010 B3: the previous implementation round-tripped every existing
+	# instance through get/set_instance_transform — 2n RenderingServer calls
+	# per placement, O(n²) over a drag (~16ms stall per placement near the
+	# 8192 cap). The buffer path is a single memcpy each way. The new slot's
+	# floats arrive zeroed from the resize; set_instance_transform fills them.
+	var kept: PackedFloat32Array = mm.buffer
+	var stride: int = kept.size() / idx if idx > 0 else 0
 	mm.instance_count = idx + 1
-	for i in range(idx):
-		mm.set_instance_transform(i, kept[i])
+	# stride == 0 only when the backend didn't materialise the buffer (the
+	# headless dummy RenderingServer); skipping the restore there matches the
+	# old per-instance path, which read identity transforms in that case.
+	if idx > 0 and stride > 0:
+		kept.resize((idx + 1) * stride)
+		mm.buffer = kept
 	mm.set_instance_transform(idx, local_tf)
 	return idx
 

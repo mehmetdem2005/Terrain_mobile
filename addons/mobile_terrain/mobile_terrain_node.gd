@@ -246,6 +246,11 @@ var _splatmap_stroke_image: Image = null
 var _active_stroke: bool = false
 var _stroke_revision: int = 0
 var _splatmap_stroke_revision: int = -1
+# TKT-010 B2: in-stroke splatmap GPU uploads are coalesced (see
+# TerrainConstants.SPLATMAP_UPLOAD_INTERVAL). The dab marks dirty; _process
+# uploads at most once per interval; end_stroke flushes unconditionally.
+var _splatmap_gpu_dirty: bool = false
+var _splatmap_upload_accum: float = 0.0
 # C3: one-shot-per-stroke guard so the "fewer textures than channels" warning
 # (MT-W14) in _paint_splatmap fires at most once per stroke, not per dab.
 var _warned_paint_slots_underflow: bool = false
@@ -1222,6 +1227,12 @@ func _process(delta: float):
 			_lod_accum = 0.0
 			_update_editor_lod()
 
+	# TKT-010 B2: coalesced in-stroke splatmap upload (see _paint_splatmap).
+	if _splatmap_gpu_dirty:
+		_splatmap_upload_accum += delta
+		if _splatmap_upload_accum >= TerrainConstants.SPLATMAP_UPLOAD_INTERVAL:
+			_flush_splatmap_upload()
+
 	# Drain the per-chunk mesh rebuild queue. HELD in the editor only while LOD
 	# still needs its first seed (above), so no chunk is ever meshed at the
 	# default full-res stride before its LOD is known.
@@ -1465,6 +1476,14 @@ func _update_editor_lod(force: bool = false) -> bool:
 	var cam_pos: Vector3 = cam.global_transform.origin
 	if not force and _last_lod_cam_pos.distance_to(cam_pos) < TerrainConstants.EDITOR_LOD_CAMERA_EPSILON:
 		return true
+	# TKT-010 B5: a mass rebuild is already draining (undo force_update_all,
+	# import, resize). Re-evaluating LOD now would pile a SECOND full dirty
+	# wave on top — every band change re-marks a chunk that is about to be
+	# (or was just) meshed. Skip; the throttled pass retries once the
+	# backlog drains. `force` (the post-build seed) still runs: it is what
+	# assigns the initial LOD the held drain is waiting for.
+	if not force and dirty_chunks.size() > TerrainConstants.LOD_SKIP_DIRTY_THRESHOLD:
+		return true
 	_last_lod_cam_pos = cam_pos
 	var origin: Vector3 = global_transform.origin
 	var half: float = float(chunk_size) * 0.5
@@ -1636,6 +1655,13 @@ func force_refresh_splatmap() -> void:
 # MultiMesh: the Mesh resource itself + every instance transform. Storing the
 # Mesh (not a path string) lets inspector primitives with no resource_path
 # persist too. Empty multimeshes are skipped.
+#
+# "slot" records the mesh's index in asset_meshes at save time. Path-less
+# meshes get embedded as SEPARATE copies in the .tscn (asset_meshes export)
+# and this .res — after a reload they are different instances, so the slot
+# index is what lets _restore_object_slots re-unify the restored placements
+# with the .tscn's copy instead of forking the registry (the duplicate-MMI /
+# GC-data-loss bug, TKT-010 A1).
 func _collect_object_slots() -> Array:
 	var slots: Array = []
 	for mesh in multimesh_instances:
@@ -1650,8 +1676,28 @@ func _collect_object_slots() -> Array:
 		transforms.resize(count)
 		for i in range(count):
 			transforms[i] = mm.get_instance_transform(i)
-		slots.append({"mesh": mesh, "transforms": transforms})
+		slots.append({"mesh": mesh, "slot": asset_meshes.find(mesh), "transforms": transforms})
 	return slots
+
+
+# TKT-010 A1: map a mesh deserialized from the companion .res back onto the
+# node's own asset_meshes instance. Path-backed meshes are already unified by
+# ResourceLoader's cache; path-less ones (inspector primitives) deserialize as
+# fresh instances, so without this step every reload forks the registry key.
+# Resolution order: identity → saved slot index (class-checked) → first
+# asset mesh of the same class → the embedded instance itself (placements
+# still restore and render; they just won't merge into an asset slot's batch).
+func _resolve_restored_mesh(mesh: Mesh, saved_slot: int) -> Mesh:
+	if mesh.resource_path != "" or mesh in asset_meshes:
+		return mesh
+	if saved_slot >= 0 and saved_slot < asset_meshes.size():
+		var candidate: Mesh = asset_meshes[saved_slot]
+		if candidate != null and candidate.get_class() == mesh.get_class():
+			return candidate
+	for am in asset_meshes:
+		if am != null and am.resource_path == "" and am.get_class() == mesh.get_class():
+			return am
+	return mesh
 
 
 # Rebuild MultiMesh instances from .res object data. Skips a slot whose mesh
@@ -1678,6 +1724,9 @@ func _restore_object_slots(slots: Array) -> void:
 			if not (res is Mesh):
 				continue
 			mesh = res
+		# TKT-010 A1: re-unify the .res copy with the .tscn's asset_meshes
+		# instance so the registry stays single-keyed across reloads.
+		mesh = _resolve_restored_mesh(mesh, slot.get("slot", -1))
 		var mmi = _get_or_create_multimesh(mesh)
 		if mmi == null:
 			continue
@@ -1698,13 +1747,28 @@ func restore_multimeshes():
 func garbage_collect_multimeshes():
 	# Drop any MultiMesh whose mesh is no longer referenced by an asset slot.
 	# keys() returns a fresh Array so erasing inside the loop is safe.
+	#
+	# TKT-010 A1 defence-in-depth: identity alone is too strict once a mesh
+	# has round-tripped through the companion .res — a path-backed mesh can
+	# momentarily be a different instance than the asset slot's (cache
+	# eviction), and freeing it destroys the user's placements. Treat a
+	# matching resource_path as "still referenced" too.
 	for mesh in multimesh_instances.keys():
 		if mesh in asset_meshes:
+			continue
+		if mesh.resource_path != "" and _asset_meshes_has_path(mesh.resource_path):
 			continue
 		var child = multimesh_instances[mesh]
 		multimesh_instances.erase(mesh)
 		if is_instance_valid(child):
 			child.queue_free()
+
+
+func _asset_meshes_has_path(path: String) -> bool:
+	for am in asset_meshes:
+		if am != null and am.resource_path == path:
+			return true
+	return false
 
 
 # V20 FIX: Re-key an existing MultiMeshInstance3D to a different mesh,
@@ -1834,8 +1898,24 @@ func start_stroke():
 			terrain_material.set_shader_parameter("splatmap", splatmap_texture_local)
 
 
+# TKT-010 B2: push the stroke image's current state to the GPU once. Reads
+# the live stroke image (the same one _paint_splatmap mutates), so a flush
+# never uploads stale bytes.
+func _flush_splatmap_upload() -> void:
+	_splatmap_gpu_dirty = false
+	_splatmap_upload_accum = 0.0
+	if splatmap_texture_local == null or _splatmap_stroke_image == null:
+		return
+	splatmap_texture_local.update(_splatmap_stroke_image)
+
+
 func end_stroke():
 	last_sculpt_pos = Vector3.INF
+	# TKT-010 B2: flush any pending coalesced splatmap upload BEFORE the
+	# stroke image cache is dropped below — the last dabs of the stroke
+	# must reach the GPU.
+	if _splatmap_gpu_dirty:
+		_flush_splatmap_upload()
 	# V22 FIX (audit-paint-init-mid-stroke): if the splatmap was rebuilt
 	# during this stroke (revision bumped or current_tool changed), the
 	# cached _splatmap_stroke_image points at the now-orphaned old texture.
@@ -1980,7 +2060,9 @@ func _apply_brush_single(hit_point: Vector3):
 				brush_strength
 			)
 		3:
-			height_data = SculptOps.smooth_height(
+			# TKT-010 B1: in-place now (packed arrays pass by reference);
+			# the old return-and-reassign contract rode on a full-map copy.
+			SculptOps.smooth_height(
 				brush,
 				height_data,
 				map_size,
@@ -2012,8 +2094,8 @@ func _apply_brush_single(hit_point: Vector3):
 				brush_radius,
 				brush_strength
 			)
-		6:  # erosion
-			height_data = SculptOps.erode_height(
+		6:  # erosion — TKT-010 B1: in-place, see smooth above.
+			SculptOps.erode_height(
 				brush,
 				height_data,
 				map_size,
@@ -2085,8 +2167,19 @@ func _paint_splatmap(cx: float, cz: float, radius: float, strength: float):
 	# V22: null guard. splatmap_texture_local can be nulled between
 	# start_stroke and now in pathological cases (eg user resized map
 	# mid-stroke and the rebuild raced ahead of our paint dab).
+	#
+	# TKT-010 B2: ImageTexture.update uploads the WHOLE image — at 1280²
+	# that's 6.5 MB per dab, 163 MB/s at the 25 Hz dab rate. In-stroke we
+	# only mark dirty and let _process coalesce uploads to one per
+	# SPLATMAP_UPLOAD_INTERVAL (end_stroke flushes). Out-of-stroke callers
+	# (scripts, undo paths) keep the eager upload.
 	if splatmap_texture_local != null:
-		splatmap_texture_local.update(img)
+		if in_stroke:
+			# img IS _splatmap_stroke_image here; _flush_splatmap_upload
+			# reads the same object, so deferred uploads are never stale.
+			_splatmap_gpu_dirty = true
+		else:
+			splatmap_texture_local.update(img)
 	# V20: inside a stroke we leave byte-array sync and shader rebind to
 	# end_stroke / start_stroke — both are no-ops per-dab. Out-of-stroke
 	# calls (scripts, manual paint) keep eager behaviour.
