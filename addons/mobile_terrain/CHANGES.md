@@ -1,3 +1,22 @@
+# MobileTerrain3D — Changelog
+
+## 22.0.0 (2026-06-10)
+
+### Değişti
+- Sürümleme SemVer 2.0.0 formatına geçti: `22.0` → `22.0.0` (davranış
+  değişikliği yok; bundan sonra sahne formatını kıran değişiklik = MAJOR,
+  geriye uyumlu özellik = MINOR, bug fix = PATCH).
+
+### Eklendi (geliştirme altyapısı, eklenti davranışı aynı)
+- Kurumsal standart yönetişimi: `docs/STANDARDS.md` (40 standart, projeye
+  uyarlanmış) + 7 skill (`.claude/skills/`) + `scripts/validate_skills.sh`
+  (skill yapı sözleşmesi denetçisi) + `scripts/release_build.sh` (SLSA L1
+  provenanslı release build: zip + SHA256SUMS + provenance.json + SBOM).
+- Ajan yetki matrisi: `docs/AGENT_AUTHORITY.md` (108 ajan, R1-R4 risk sınıfı,
+  5/5 yönetişim kontrolü temiz).
+
+---
+
 # MobileTerrain3D V22 — AAA Architecture & Deterministic Save
 
 V21'den V22'ye geçişte iki büyük değişiklik:

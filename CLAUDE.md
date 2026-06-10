@@ -4,8 +4,11 @@
 
 Kurumsal standartlar referansı `docs/STANDARDS.md` dosyasındadır (TOGAF/yaşam
 döngüsü, eklenti/SDK, oyun geliştirme, AI-ajan standartları — her biri projeye
-uyarlanmış). Mimari karar, release, refactor veya ajan-yetki değişikliği
-yaparken önce bu dosyaya başvur; sondaki boşluk-analizi tablosunu güncel tut.
+uyarlanmış). Standartlar **çalıştırılabilir skill'lere** derlidir
+(`.claude/skills/`): extract-system, quality-gate, release-engineering,
+incident-response, agent-governance, mobile-compliance, standards-audit.
+İlgili iş türünde önce eşleşen skill'i uygula; skill yapısını değiştirirsen
+`scripts/validate_skills.sh` yeşil kalmalı. Boşluk tablosunu güncel tut.
 
 ## PR auto-merge policy
 

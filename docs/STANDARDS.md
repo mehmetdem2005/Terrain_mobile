@@ -247,13 +247,30 @@
 
 | Standart alanı | Mevcut durum | Eksik / sonraki adım |
 |---|---|---|
-| Test (29119) | `test/run_all.sh` pipeline ✓ | GitHub Actions CI'a bağlanması |
-| Sürümleme (SemVer) | plugin.cfg "21.0"/"22.0" | `MAJOR.MINOR.PATCH` formatına geçiş + migration politikası |
-| Changelog | CHANGES.md ✓ | Keep-a-Changelog başlık formatı |
-| Lisans (SPDX) | — | Kök LICENSE dosyası + fırça maskeleri kaynak beyanı |
-| Tedarik zinciri (SLSA) | — | Scriptli release build + commit SHA provenance |
-| Ajan yönetişimi (NIST/IMDA) | 108 ajan tanımı + CLAUDE.md politikası ✓ | Ajan yetki matrisi tek tabloda özetlenmeli |
-| Kalite önceliği (25010) | Mobil-öncelikli kararlar ✓ | PR şablonuna "performans etkisi" alanı |
+| Test (29119) | `test/run_all.sh` pipeline ✓ | CI şablonu hazır (`.claude/skills/quality-gate/assets/ci.yml`) — `.github/workflows/`'a kurulumu sahip onayı bekliyor |
+| Sürümleme (SemVer) | plugin.cfg `22.0.0` ✓ | — (karar tablosu: release-engineering skill'i) |
+| Changelog | CHANGES.md Keep-a-Changelog başlıklı ✓ | — |
+| Lisans (SPDX) | — | Kök LICENSE dosyası — **lisans seçimi sahip kararı** + fırça maskeleri kaynak beyanı |
+| Tedarik zinciri (SLSA) | `scripts/release_build.sh` ✓ (zip+SHA256+provenance+SBOM) | İlk gerçek release'te uçtan uca koşulması |
+| Ajan yönetişimi (NIST/IMDA) | `docs/AGENT_AUTHORITY.md` matrisi ✓, 5/5 denetim temiz | Denetim her ajan değişikliğinde tekrarlanır (agent-governance skill'i) |
+| Kalite önceliği (25010) | quality-gate skill'inde bütçe denetimi ✓ | PR şablonuna "performans etkisi" alanı |
+| Skill yönetişimi (meta) | 7 skill + `scripts/validate_skills.sh` ✓ `SKILL_VALIDATION_OK` | CI'a bağlanınca her push'ta otomatik koşar |
+
+## Skill paketi (standartların çalıştırılabilir hali)
+
+Her standart kümesi bir skill'e derlenmiştir (`.claude/skills/`); skill'lerin
+kendisi de sözleşmeye tabidir (SemVer sürüm, izlenebilirlik matrisi, kabul
+kriterleri, hata yolları, changelog — denetçi: `scripts/validate_skills.sh`):
+
+| Skill | Kapsadığı standartlar | Ne zaman |
+|---|---|---|
+| extract-system | TOGAF/Zachman, ISO 12207, 29119, SemVer | Monolitten sistem çıkarırken |
+| quality-gate | ISO 29119, 25010, OWASP ASVS, OpenSSF | Her merge/release öncesi |
+| release-engineering | SemVer, SLSA, SPDX, Keep-a-Changelog, Asset Library | Release çıkarırken |
+| incident-response | ITIL known-error, ISO 12207 | Kullanıcı bug raporunda |
+| agent-governance | ISO 42001/23894, NIST AI RMF, IMDA MGF, SAIF | Ajan ekler/değiştirirken |
+| mobile-compliance | Khronos, Play policy, XAG/CVAA, GDPR/KVKK | Shader/UI/bellek işlerinde |
+| standards-audit | Hepsi (meta) | Periyodik denetim |
 
 ## Kaynaklar
 
