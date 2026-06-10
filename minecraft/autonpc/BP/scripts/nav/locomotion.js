@@ -17,6 +17,9 @@ export function clearNav(workerId) { navs.delete(workerId); }
 function planFor(worker, nav, target, reach) {
   const r = findPath(worker.dimension, worker.location, target, reach);
   nav.cooldown = REPLAN_COOLDOWN;
+  // SIM-S2b kök düzeltmesi: tam (complete) ve BOŞ yol = zaten hedef
+  // menzilindeyiz → "varıldı"; blocked değil.
+  if (r && r.complete && r.path.length === 0) { nav.path = undefined; return "at"; }
   if (!r || !r.path.length) { nav.path = undefined; return false; }
   nav.path = r.path;
   nav.idx = 0;
@@ -52,7 +55,9 @@ export function walkTo(worker, target, opts = {}) {
       nav.path = undefined;
     }
     if (nav.cooldown > 0 && nav.path === undefined && nav.failedOnce) return { moving: false };
-    if (!planFor(worker, nav, target, reach)) {
+    const plan = planFor(worker, nav, target, reach);
+    if (plan === "at") { clearNav(worker.id); return { reached: true }; }
+    if (!plan) {
       nav.failedOnce = true;
       return { blocked: true };
     }

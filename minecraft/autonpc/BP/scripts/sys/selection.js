@@ -20,6 +20,15 @@ export function getSelection(playerName) {
 export function clearSelection(playerName) { selections.delete(playerName); }
 
 export function registerSelection() {
+  try {
+    subscribeWand();
+  } catch (e) {
+    try { console.warn(`[AutoNPC] seçim değneği bağlanamadı: ${e}`); } catch (e2) { /* log yok */ }
+  }
+  startHologram();
+}
+
+function subscribeWand() {
   world.beforeEvents.playerInteractWithBlock.subscribe((ev) => {
     try {
       if (ev.itemStack?.typeId !== "minecraft:stick" || !ev.player) return;
@@ -33,6 +42,9 @@ export function registerSelection() {
     } catch (e) { /* event kapalı olabilir */ }
   });
 
+}
+
+function startHologram() {
   // hologram: kenar çizgileri (10 tick'te bir, seçim başına ~yüz nokta)
   system.runInterval(() => {
     for (const [name, s] of selections) {

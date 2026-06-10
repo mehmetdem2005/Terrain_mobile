@@ -55,3 +55,25 @@ Yeni yetenekler (hepsi RealWork: yürü→yap→topla):
 Dürüst sınırlar (PLAN_V5.json): vanilla çatlak overlay + gerçek shield-block
 mekaniği + /locate çıktısı + bobber AI'sı custom entity'ye kapalı — bunlar
 birebir API yerine en yakın gerçek-etki simülasyonuyla yapıldı.
+
+## v5.0.1 — KÖK NEDEN DÜZELTMESİ + derin denetim ağı
+**"NPC hiç kıpırdamıyor / emir işlemiyor" kök nedeni:** `main.js` önce olayları
+bağlıyordu ve `chatSend` before-event'i STABIL API'de yok (beta-gated) →
+subscribe fırlatınca init ölüyor → `startTick()` hiç çağrılmıyordu = tamamen
+cansız NPC. (v3 her subscribe'ı tek tek try'a sarıyordu; v4 temizliği bu
+korumayı söküp hatayı ölümcülleştirmişti.)
+
+Kök çözümler:
+1. `startTick()` HER ŞEYDEN ÖNCE + korumalı; her olay aboneliği bağımsız
+   `sub()` zarfında — biri yoksa diğerleri ve tick YAŞAR (`npc tanı` raporlar)
+2. Chat'siz cihaz köprüsü: `/scriptevent autonpc:cmd <komut>` ile TÜM npc
+   komutları; panel + kitap zaten olaysız çalışır
+3. Manifest modülleri 2.0.0 → **1.17.0 / 1.3.0** (tüm 1.21.70+ stabilde mevcut)
+4. Entity: knockback_resistance 1.0→0.4, pushable=true (vurunca tepki verir)
+
+**Derin denetim ağı (`sim/`):** mock `@minecraft/server` + sanal voxel dünyası;
+addon GERÇEKTEN boot edilir, sahte işçi 6 senaryoda koşturulur ve assert edilir:
+boot-stabil-API, yürüyüş+varış, ağaç kırma+drop toplama, kalıcılık, scriptevent
+emri, creeper-kalkan refleksi. İlk koşuda gerçek bir hata yakaladı (boş-yol =
+"varıldı" yerine "blocked" sayılıyordu) — kökten düzeltildi. **13/13 PASS**;
+`tools/build_mcaddon.sh` artık sim geçmeden paket ÜRETMEZ.

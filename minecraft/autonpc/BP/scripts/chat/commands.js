@@ -9,6 +9,7 @@ import { loadState, saveState } from "../core/persist.js";
 import { setTask, stopAll } from "../core/state.js";
 import { canonicalBlockId } from "../jobs/collect_block.js";
 import { getSelection } from "../sys/selection.js";
+import { diagReport } from "../sys/events.js";
 
 const TREE_ALIASES = {
   mese: "oak", "meşe": "oak", oak: "oak",
@@ -39,6 +40,11 @@ export function handleChat(player, message) {
   const cmd = parts[1] || "yardım";
 
   if (["yardım", "yardim", "help", "?"].includes(cmd)) { say(player, HELP); return true; }
+  if (["tanı", "tani", "diag"].includes(cmd)) {
+    const lines = diagReport().map((d) => `${d.ok ? "§a✓" : "§c✗"} ${d.name}${d.err ? " — " + d.err : ""}§r`);
+    say(player, `Olay tanısı:\n${lines.join("\n") || "kayıt yok"}`);
+    return true;
+  }
   if (["kitap", "book"].includes(cmd)) { giveGuide(player, true); return true; }
   if (["işçi", "isci", "worker", "spawn"].includes(cmd)) { spawnWorker(player); return true; }
   if (["panel", "menu", "menü"].includes(cmd)) {

@@ -1,8 +1,8 @@
 /**
- * AutoNPC v4.0 — olay kablolaması. (D4 düzeltmesi)
- * v3 aynı etkileşim için before+after+dataDriven üçlü abone olup paneli
- * 2-3 kez açıyordu; scriptEventReceive'i de yanlış kaynaktan (world) dinliyordu.
- * v4: her niyet için TEK abonelik + oyuncu-başına debounce.
+ * AutoNPC v5.0.1 — KORUMALI olay kablolaması + tanı ağı.
+ * KÖK DÜZELTME: her subscribe bağımsız `sub()` zarfında. Bir olayın stabil
+ * API'de olmaması (örn. chatSend before-event'i beta-gated) DİĞERLERİNİ ve
+ * tick'i etkileyemez. Hangi olayın bağlandığı `npc tanı` ile görülebilir.
  */
 import { world, system } from "@minecraft/server";
 import { WORKER_ID, PANEL_DEBOUNCE } from "../core/config.js";
@@ -16,8 +16,20 @@ import { loadState } from "../core/persist.js";
 import { armorPoints } from "../combat/gear.js";
 import { shieldWindows } from "../combat/threats.js";
 
-const lastPanelTick = new Map(); // playerId -> system.currentTick
+const diag = []; // {name, ok, err}
+export function diagReport() { return diag; }
 
+function sub(name, fn) {
+  try {
+    fn();
+    diag.push({ name, ok: true });
+  } catch (e) {
+    diag.push({ name, ok: false, err: String(e).slice(0, 80) });
+    try { console.warn(`[AutoNPC] olay bağlanamadı: ${name}: ${e}`); } catch (e2) { /* log yok */ }
+  }
+}
+
+const lastPanelTick = new Map();
 function debounced(player) {
   const now = system.currentTick;
   const last = lastPanelTick.get(player.id) ?? -999;
@@ -27,20 +39,19 @@ function debounced(player) {
 }
 
 export function registerEvents() {
-  // yeni oyuncuya kitap
-  world.afterEvents.playerSpawn.subscribe((ev) => {
+  sub("playerSpawn", () => world.afterEvents.playerSpawn.subscribe((ev) => {
     if (ev.initialSpawn && ev.player) ensureGuideOnSpawn(ev.player);
-  });
+  }));
 
-  // kitap kullanımı → ana menü (TEK abonelik: after)
-  world.afterEvents.itemUse.subscribe((ev) => {
+  // kitap kullanımı → ana menü (panele HER ZAMAN ulaşılabilen yol)
+  sub("itemUse", () => world.afterEvents.itemUse.subscribe((ev) => {
     if (!ev.source || !isGuide(ev.itemStack)) return;
     if (debounced(ev.source)) return;
     openGuide(ev.source);
-  });
+  }));
 
-  // işçiyle etkileşim → panel (TEK abonelik: before + system.run)
-  world.beforeEvents.playerInteractWithEntity.subscribe((ev) => {
+  // işçiyle etkileşim → panel
+  sub("interactWithEntity", () => world.beforeEvents.playerInteractWithEntity.subscribe((ev) => {
     if (ev.target?.typeId !== WORKER_ID || !ev.player) return;
     ev.cancel = true;
     const player = ev.player, target = ev.target;
@@ -48,30 +59,32 @@ export function registerEvents() {
       if (debounced(player)) return;
       openWorkerPanel(player, target);
     });
-  });
+  }));
 
-  // scriptevent köprüsü (mcfunction'lar için) — DOĞRU kaynak: system.afterEvents
-  system.afterEvents.scriptEventReceive.subscribe((ev) => {
+  // scriptevent köprüsü — chat'siz cihazlarda da TÜM komutlar çalışsın:
+  // /scriptevent autonpc:cmd <npc komutu>  (örn: /scriptevent autonpc:cmd odun oak 16)
+  sub("scriptEventReceive", () => system.afterEvents.scriptEventReceive.subscribe((ev) => {
     const p = ev.sourceEntity?.typeId === "minecraft:player" ? ev.sourceEntity : world.getAllPlayers()[0];
     if (!p) return;
     if (ev.id === "autonpc:give_book") giveGuide(p, true);
-    if (ev.id === "autonpc:spawn_worker") spawnWorker(p);
-    if (ev.id === "autonpc:panel") openGuide(p);
-  });
+    else if (ev.id === "autonpc:spawn_worker") spawnWorker(p);
+    else if (ev.id === "autonpc:panel") openGuide(p);
+    else if (ev.id === "autonpc:cmd") handleChat(p, "npc " + String(ev.message || "yardım"));
+  }));
 
-  // chat komutları + serbest sohbet
-  world.beforeEvents.chatSend.subscribe((ev) => {
+  // chat komutları + sohbet — STABIL API'DE OLMAYABİLİR (beta-gated).
+  // Bağlanamazsa tanıya düşer; komutlar scriptevent + panel ile yine tam çalışır.
+  sub("chatSend", () => world.beforeEvents.chatSend.subscribe((ev) => {
     if (handleChat(ev.sender, ev.message)) { ev.cancel = true; return; }
     const sender = ev.sender, msg = ev.message;
     system.run(() => { try { tryTalk(sender, msg); } catch (e) { /* sohbet opsiyonel */ } });
-  });
+  }));
 
-  // v5: alan seçimi (çubuk + hologram)
-  registerSelection();
+  // alan seçimi (kendi içinde de korumalı)
+  sub("selectionWand", () => registerSelection());
 
-  // v5: zırh + kalkan hasar azaltımı (custom entity'de armor attribute yok —
-  // vanilla formüle yakın telafi: zırh puanı*%4, kalkan penceresi +%60)
-  world.afterEvents.entityHurt.subscribe((ev) => {
+  // zırh + kalkan hasar azaltımı
+  sub("entityHurt", () => world.afterEvents.entityHurt.subscribe((ev) => {
     try {
       const w = ev.hurtEntity;
       if (w?.typeId !== WORKER_ID) return;
@@ -87,5 +100,5 @@ export function registerEvents() {
       if (!hp) return;
       hp.setCurrentValue(Math.min(hp.effectiveMax, hp.currentValue + ev.damage * reduce));
     } catch (e) { /* telafi opsiyonel */ }
-  });
+  }));
 }

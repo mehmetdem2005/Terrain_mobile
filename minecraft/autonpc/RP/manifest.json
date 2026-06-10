@@ -4,14 +4,26 @@
     "name": "AutoNPC PlayerAI v5.0 RP",
     "description": "v5.0 resource pack: worker entity gorseli, animasyonlar, kitap dokusu.",
     "uuid": "45743f09-2fb3-48fc-a6d3-d2f8ae54ae16",
-    "version": [5, 0, 0],
-    "min_engine_version": [1, 21, 70]
+    "version": [
+      5,
+      0,
+      1
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      70
+    ]
   },
   "modules": [
     {
       "type": "resources",
       "uuid": "2996c179-421d-4432-ac5d-69dc0bdaee27",
-      "version": [5, 0, 0]
+      "version": [
+        5,
+        0,
+        1
+      ]
     }
   ]
 }
