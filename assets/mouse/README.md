@@ -89,3 +89,16 @@ root. 4 bacakta 2-kemik IK + pole; `IK_hand/foot.L/R` üzerinde `ik_fk` (1=IK,
   döngüde kare1 vs kareN+1 evaluated-vertex farkı 0.0000 mm.
 - MouseRigged_anim.glb: iki döngü ayrı glTF animasyonu (NLA track),
   max-4-influence. MouseRigged_clean.blend: animasyonsuz temiz taban.
+
+## v9 — KESİN TEŞHİS: unbaked constraints (animasyon-only patlama)
+- Kök neden: pati kemikleri keyframe'siz IK kontrollerinden COPY_ROTATION
+  alıyordu; glTF exporter bu kısıt-sürümlü kanalları düşürüyor
+  (KhronosGroup/glTF-Blender-IO #1541 sınıfı) → uzuv dönüyor, pati
+  dönmüyor → YALNIZ animasyonda yırtılma. Rest temizdi çünkü kısıtlar
+  rest'te kimlikti.
+- Kurumsal pipeline uygulandı (37_bake_pipeline.py): visual-keying ile her
+  kare TÜM deform kemiklerine bake -> 8 kısıt silindi -> yalnız deform
+  iskeletiyle ihraç. Bake sadakati: 9 örnek karede 0.000 mm.
+- F-curve denetimi: deform kemiklerinde scale key YOK; retarget YOK;
+  kontrol kemiklerinde deform/vgroup sızıntısı YOK.
+- MouseRigged_baked.glb: kısıtsız, tam-bake'li, dikişsiz iki döngü.
