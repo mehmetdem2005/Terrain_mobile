@@ -1,5 +1,12 @@
 # Project instructions for Claude Code
 
+## Standartlar bilgi tabanı
+
+Kurumsal standartlar referansı `docs/STANDARDS.md` dosyasındadır (TOGAF/yaşam
+döngüsü, eklenti/SDK, oyun geliştirme, AI-ajan standartları — her biri projeye
+uyarlanmış). Mimari karar, release, refactor veya ajan-yetki değişikliği
+yaparken önce bu dosyaya başvur; sondaki boşluk-analizi tablosunu güncel tut.
+
 ## PR auto-merge policy
 
 The repo owner (mehmetdem2005) has granted standing authorization: after
