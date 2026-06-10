@@ -1,0 +1,1 @@
+scriptevent autonpc:give_book

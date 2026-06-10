@@ -1,0 +1,1 @@
+scriptevent autonpc:spawn_worker
