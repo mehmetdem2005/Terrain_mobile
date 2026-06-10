@@ -1,5 +1,31 @@
 # MobileTerrain3D — Changelog
 
+## 22.1.0 (2026-06-10) — TKT-010 denetim onarımları
+
+### Düzeltildi
+- **Eşya yerleştirme (S1, veri kaybı):** path'siz mesh'ler (BoxMesh vb.) .tscn
+  ve .res'e ayrı kopya gömüldüğünden reload sonrası registry çatallanıyor,
+  GC yüklenen yerleştirmeleri siliyordu. Restore artık .res kopyasını
+  asset_meshes'teki .tscn kopyasıyla yeniden birleştiriyor
+  (`_resolve_restored_mesh`, slot indeksi kaydı, GC path-toleransı).
+  Regresyon: `test_object_identity.gd` (eski kodda 3 failure ile doğrulandı).
+- Boş "Terrain Place Objects" undo aksiyonu (hayalet Ctrl+Z slotu) artık
+  oluşmuyor; küçülmüş multimesh için bozucu restore kaydedilmiyor
+  (undo_recorder A2/A3 + 2 yeni test).
+- Texture slotu silinince kalan slotların tiling/normal/roughness/AO
+  değerlerinin kayması (4 skaler PBR dizisi silmede atlanıyordu).
+- Plugin kapatılırken aktif stroke finalize edilmiyor, undo aksiyonu askıda
+  kalıyordu; `_finalize_active_stroke` freed-node'a karşı da korumalı.
+- `_make_visible(false)` placement_initial_counts'u da temizliyor.
+
+### Performans (5 × P1)
+- Smooth/erode: dab başına 6.5 MB tam-harita kopyası → footprint-yerel tampon.
+- Paint: dab başına tam splatmap GPU upload'u → 0.1s birleştirme + stroke
+  sonu flush (163 MB/s → ~10 Hz).
+- place_one: O(n²) RS transform kopyası → tek buffer oku/yaz.
+- Fırça imleci: motion başına ~2.5K çağrı → 30 Hz rate-cap.
+- Undo + editör LOD çifte tam-rebuild dalgası → backlog > 128 iken LOD atlar.
+
 ## 22.0.0 (2026-06-10)
 
 ### Değişti

@@ -31,7 +31,7 @@
     "Quality Gate Officer",
     "Audit Trail Officer"
   ],
-  "state": "AUDIT_COMPLETE",
+  "state": "FIXES_APPLIED",
   "opened": "2026-06-10",
   "findings": {
     "S1": 1,
@@ -42,5 +42,6 @@
     "P2": 7,
     "P3": 8
   },
-  "evidence": "test/run_all.sh 15/15 ALL TESTS PASSED on real Godot 4.6.2; report: .studio/tickets/TKT-010/audit-report.md"
+  "evidence": "test/run_all.sh 15/15 ALL TESTS PASSED on real Godot 4.6.2; report: .studio/tickets/TKT-010/audit-report.md",
+  "fixes": "S1/A1 + A2-A4 + C1-C3 + P1 B1-B5 applied; 22.1.0; run_all 18 checks ALL TESTS PASSED; P2/P3 + C5 catalog cleanup deferred to next session"
 }

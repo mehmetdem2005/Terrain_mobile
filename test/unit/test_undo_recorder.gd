@@ -62,6 +62,8 @@ func _init() -> void:
 	_run("sculpt_undo_empty_backup_no_action", _test_sculpt_empty, failures)
 	_run("placement_undo_empty_records_no_action", _test_placement_empty, failures)
 	_run("placement_undo_builds_count_delta", _test_placement_undo, failures)
+	_run("placement_undo_unchanged_no_phantom_action", _test_placement_unchanged, failures)
+	_run("placement_undo_shrunk_no_corrupt_restore", _test_placement_shrunk, failures)
 
 	if failures.is_empty():
 		print("UNDO_RECORDER_TEST_OK")
@@ -149,6 +151,49 @@ func _test_placement_empty() -> String:
 		return "empty records must return false"
 	if ur.create_count != 0:
 		return "empty records must create no action"
+	return ""
+
+
+# TKT-010 A2 regression: when no touched multimesh actually changed count
+# (all freed/unchanged mid-stroke), NO action may be created — the old code
+# committed an empty "Terrain Place Objects" that ate one Ctrl+Z slot.
+func _test_placement_unchanged() -> String:
+	var ur := MockUndoRedo.new()
+	var node := MockTerrain.new()
+	var mmi := MultiMeshInstance3D.new()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.instance_count = 3
+	mmi.multimesh = mm
+	var records := [{"mmi": mmi, "index": 0, "transform": Transform3D()}]
+	var committed: bool = Recorder.commit_placement_undo(ur, node, records, {mmi: 3})
+	mmi.free()
+	if committed:
+		return "unchanged counts must return false"
+	if ur.create_count != 0:
+		return "unchanged counts must create NO action (phantom undo slot)"
+	return ""
+
+
+# TKT-010 A3 regression: a multimesh that SHRANK mid-stroke (slot deleted
+# while dragging) has unrecoverable pre-stroke transforms — recording a
+# restore from the truncated buffer used to collapse instances to the origin
+# on undo. The builder must skip it entirely.
+func _test_placement_shrunk() -> String:
+	var ur := MockUndoRedo.new()
+	var node := MockTerrain.new()
+	var mmi := MultiMeshInstance3D.new()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.instance_count = 1  # shrank from 3 during the stroke
+	mmi.multimesh = mm
+	var records := [{"mmi": mmi, "index": 0, "transform": Transform3D()}]
+	var committed: bool = Recorder.commit_placement_undo(ur, node, records, {mmi: 3})
+	mmi.free()
+	if committed:
+		return "shrunk multimesh must return false (nothing recoverable)"
+	if ur.create_count != 0 or not ur.undo_methods.is_empty():
+		return "shrunk multimesh must record no restore op"
 	return ""
 
 
