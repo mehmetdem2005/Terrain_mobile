@@ -17,8 +17,8 @@ Kaynak: `31b84266-housemouse3dmodel.glb` (Tripo AI, 55.580 vertex, 4K BaseColor,
    (forearm.L 45°, forearm.R 90°, shin.L 120°, shin.R 90°).
 
 ## Dosyalar
-- `MouseRigged_pro2.blend` — ASIL: tam rig (IK/FK anahtarlı, yuvarlak widget'lar)
-- `MouseRigged_pro2.glb` — oyun motoru: skin + bake'li `idle_test` animasyonu
+- `MouseRigged_pro3.blend` — ASIL: tam rig (IK/FK anahtarlı, yuvarlak widget'lar)
+- `MouseRigged_pro3.glb` — oyun motoru: skin + bake'li `idle_test` animasyonu
 - Render'lar: kuyruk süpürme/kıvrılma, göğüs altı yakın plan, animasyon karesi
 
 ## Rig içeriği
@@ -37,3 +37,11 @@ root. 4 bacakta 2-kemik IK + pole; `IK_hand/foot.L/R` üzerinde `ik_fk` (1=IK,
 - Anatomik L/R takası: fare -Y yönüne bakar, anatomik sol = +X; 22 kemik
   yeniden adlandı, vertex group/constraint otomatik eşlendi (0 kayıp)
 - IK pole yeniden kalibre (75/45/75/120°)
+
+## v4 (arka bacak düzeltmesi)
+- Arka zincir ölçülen kütle akışına oturtuldu: kalça haunch tepesinde
+  (y≈0.23), diz görünür bacak sütununun önünde (y≈0.12), topuk ölçülen
+  noktada — uyluk artık görünür bacağın içinde
+- Pati uçları parmak-yelpaze merkeziyle (PCA eksen ucu değil) hesaplandı
+- Ağırlıklar sıfırdan yeniden çözüldü (proxy bone-heat + transfer, 0 ağırlıksız)
+- IK pole yeniden kalibre (75/45/90/105°)
