@@ -31,3 +31,27 @@ iki NPC sistemi birden karışıklık yaratır).
 - Doğrulama: `python3 tools/validate.py` (JSON lint, UUID, BP↔RP kimlik eşleşmeleri, import grafiği)
 - Paket: `bash tools/build_mcaddon.sh` → `dist/AutoNPC_PlayerAI_v4_0.mcaddon`
 - Plan: `PLAN.json` (analiz + mimari + adımlar)
+
+## v5.0 — "gerçek oyuncu" genişlemesi (PLAN_V5.json)
+Yeni yetenekler (hepsi RealWork: yürü→yap→topla):
+- **Savaş:** kılıç craft+vanilla hasar tablosu, YAY+OK (gerçek projektil), hostil
+  radar; **creeper yaklaşınca kalkan açar** ve geri çekilir; zırh craft+kuşanma
+  (gerçek equippable görseli) + vanilla-benzeri hasar azaltımı
+- **Av:** inek/koyun/at/lama... öldürür (gerçek loot düşer), toplar
+- **Balıkçılık:** su bulur, yüzer (A* su hücreleri), olta sallar, yakalar
+- **Alan seçimi:** elinde ÇUBUKLA 2 köşe → partikül HOLOGRAM çerçeve;
+  `npc düzleştir` kazar, `npc doldur` creeper çukurlarını doldurur
+- **Hazine:** yakın sandıkları bulur, GERÇEK container API ile yağmalar, döner
+- **Zikzak merdiven maden** + her 6 basamakta meşale
+- **Ev v2:** üçgen çatı, kapı, 2 sandık+craft masası+fırın+yatak; fazla eşyayı
+  sandığa GERÇEK koyar; büyü masası (malzeme varsa) yapar+yerleştirir
+- **Nether görevi:** elmas kazma→obsidyen→portal İNŞA eder→Nether'e geçer→
+  ancient debris arar; yoksa YATAĞI 9 BLOK İLERİYE koyup gerçek patlama ile
+  (createExplosion) debris çıkarır→scrap→ingot→NETHERITE alet+zırh→eve döner
+- **Oto mod yönetmeni:** odun→alet→demir→savaş seti→ev→elmas→büyü masası→
+  yün/yatak→altın→NETHER→netherite (tam oyuncu ilerleyişi)
+- **Sohbet:** yakındayken chat'e yaz; durum/envanter farkındalıklı TR cevap
+
+Dürüst sınırlar (PLAN_V5.json): vanilla çatlak overlay + gerçek shield-block
+mekaniği + /locate çıktısı + bobber AI'sı custom entity'ye kapalı — bunlar
+birebir API yerine en yakın gerçek-etki simülasyonuyla yapıldı.

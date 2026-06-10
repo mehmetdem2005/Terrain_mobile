@@ -1,9 +1,9 @@
 /** AutoNPC v4.0 — merkezi ayarlar. Tüm sayısal ayar SADECE burada. */
-export const VERSION = "v4.0";
+export const VERSION = "v5.0";
 export const NS = "autonpc";
 export const WORKER_ID = `${NS}:worker`;
 export const GUIDE_ID = `${NS}:guide_book`;
-export const GUIDE_NAME = "AutoNPC Yönetim Kitabı v4.0";
+export const GUIDE_NAME = "AutoNPC Yönetim Kitabı v5.0";
 export const TAG_WORKER = `${NS}.worker`;
 export const STATE_PROP = `${NS}:state`;
 export const PANEL_PROP = `${NS}:panel_req`;

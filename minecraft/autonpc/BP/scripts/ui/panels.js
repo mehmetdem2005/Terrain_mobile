@@ -14,6 +14,7 @@ import { setTask, stopAll, addInv, removeInv, invText } from "../core/state.js";
 import { giveGuide } from "./guide.js";
 import { canonicalBlockId } from "../jobs/collect_block.js";
 import { floorV } from "../core/math.js";
+import { getSelection } from "../sys/selection.js";
 
 function show(player, form, cb) {
   system.run(() => {
@@ -82,8 +83,11 @@ export function openWorkerPanel(player, worker) {
     .button("🌳 Odun görevi")
     .button("🧱 Blok topla")
     .button("⛏️ Maden")
-    .button("🏠 Ev yap")
-    .button(st.auto ? "🟢 Otomatik kapat" : "⚪ Otomatik aç")
+    .button("🏠 Ev yap (çatı+iç eşya)")
+    .button("🗡 Avlan / 🎣 Balık / 💎 Hazine")
+    .button("⬜ Seçili alanı düzleştir")
+    .button("🔥 Nether görevi (netherite)")
+    .button(st.auto ? "🟢 Otomatik kapat" : "⚪ Otomatik aç (tam ilerleme)")
     .button("🚶 Yürüme testi")
     .button("📍 Base'i buraya al")
     .button("🛑 Durdur");
@@ -101,11 +105,38 @@ export function openWorkerPanel(player, worker) {
       case 3: return blockMenu(player, worker);
       case 4: return oreMenu(player, worker);
       case 5: st.auto = false; setTask(st, "build_house", {}); saveState(worker, st); say(player, "Ev görevi verildi."); return;
-      case 6: st.auto = !st.auto; st.task = undefined; st.status = st.auto ? "Otomatik mod" : "Emir bekliyor"; st.dirty = true; saveState(worker, st); say(player, `Otomatik: ${st.auto ? "açık" : "kapalı"}`); return;
-      case 7: st.auto = false; setTask(st, "walk_test", { target: { x: player.location.x + 6, y: player.location.y, z: player.location.z + 6 } }); saveState(worker, st); say(player, "Yürüme testi verildi."); return;
-      case 8: st.base = floorV(player.location); st.dirty = true; saveState(worker, st); say(player, "Base ayarlandı."); return;
-      case 9: stopAll(st); saveState(worker, st); updateName(worker, st); say(player, "Durduruldu."); return;
+      case 6: return lifeMenu(player, worker);
+      case 7: {
+        const sel = getSelection(player.name);
+        if (!sel) return say(player, "Önce elinde ÇUBUK ile 2 köşe işaretle (hologram).");
+        st.auto = false; setTask(st, "flatten", { region: sel, level: sel.min.y });
+        saveState(worker, st); say(player, "Düzleştirme verildi."); return;
+      }
+      case 8: st.auto = false; setTask(st, "nether_quest", {}); saveState(worker, st); say(player, "Nether görevi: portal → debris → netherite."); return;
+      case 9: st.auto = !st.auto; st.task = undefined; st.status = st.auto ? "Otomatik mod" : "Emir bekliyor"; st.dirty = true; saveState(worker, st); say(player, `Otomatik: ${st.auto ? "açık" : "kapalı"}`); return;
+      case 10: st.auto = false; setTask(st, "walk_test", { target: { x: player.location.x + 6, y: player.location.y, z: player.location.z + 6 } }); saveState(worker, st); say(player, "Yürüme testi verildi."); return;
+      case 11: st.base = floorV(player.location); st.dirty = true; saveState(worker, st); say(player, "Base ayarlandı."); return;
+      case 12: stopAll(st); saveState(worker, st); updateName(worker, st); say(player, "Durduruldu."); return;
     }
+  });
+}
+
+function lifeMenu(player, worker) {
+  const form = new ActionFormData().title("Yaşam görevleri")
+    .button("🐄 İnek avla x3").button("🐑 Koyun avla x4 (yün)").button("🐔 Tavuk avla x4 (tüy/ok)")
+    .button("🎣 Balık tut x5").button("💎 Hazine ara (sandıklar)").button("⬅ Geri");
+  show(player, form, (r) => {
+    if (r.canceled) return;
+    const st = loadState(worker);
+    st.auto = false;
+    if (r.selection === 0) setTask(st, "hunt", { animal: "cow", amount: 3 });
+    else if (r.selection === 1) setTask(st, "hunt", { animal: "sheep", amount: 4 });
+    else if (r.selection === 2) setTask(st, "hunt", { animal: "chicken", amount: 4 });
+    else if (r.selection === 3) setTask(st, "fish", { amount: 5 });
+    else if (r.selection === 4) setTask(st, "treasure", {});
+    else return openWorkerPanel(player, worker);
+    saveState(worker, st);
+    say(player, "Görev verildi.");
   });
 }
 

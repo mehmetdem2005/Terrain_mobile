@@ -2,7 +2,7 @@
 # AutoNPC v4.0 — .mcaddon paketleyici. Önce doğrulama, sonra zip.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="${1:-$ROOT/dist/AutoNPC_PlayerAI_v4_0.mcaddon}"
+OUT="${1:-$ROOT/dist/AutoNPC_PlayerAI_v5_0.mcaddon}"
 
 python3 "$ROOT/tools/validate.py"
 
@@ -16,8 +16,8 @@ fi
 mkdir -p "$(dirname "$OUT")"
 rm -f "$OUT"
 TMP="$(mktemp -d)"
-cp -r "$ROOT/BP" "$TMP/AutoNPC_PlayerAI_v40_BP"
-cp -r "$ROOT/RP" "$TMP/AutoNPC_PlayerAI_v40_RP"
+cp -r "$ROOT/BP" "$TMP/AutoNPC_PlayerAI_v50_BP"
+cp -r "$ROOT/RP" "$TMP/AutoNPC_PlayerAI_v50_RP"
 (cd "$TMP" && zip -r -q "$OUT" .)
 rm -rf "$TMP"
 echo "BUILD_OK $OUT ($(du -h "$OUT" | cut -f1))"

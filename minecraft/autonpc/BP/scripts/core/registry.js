@@ -92,17 +92,25 @@ export function isPassable(id) { return AIR.has(id) || PASSABLE_EXTRA.has(id); }
 export function isSolid(id) { return !isPassable(id) && !LIQUID.has(id); }
 export function isBreakable(id) { return !!id && !FORBIDDEN.has(id) && !LIQUID.has(id); }
 
+// v5: nether/elit bloklar — özel kazı kuralları
+export const HARD_BLOCKS = {
+  "minecraft:obsidian": { level: "diamond", ticks: { netherite: 90, diamond: 110 }, fallback: 500 },
+  "minecraft:ancient_debris": { level: "diamond", ticks: { netherite: 50, diamond: 60 }, fallback: 400 },
+  "minecraft:netherrack": { level: "wood", ticks: { netherite: 6, diamond: 7, iron: 9, stone: 12, wood: 16 }, fallback: 40 },
+};
+
 /** Bloğun gerektirdiği alet sınıfı. */
 export function toolClassFor(id) {
   if (LOG_BLOCKS.has(id)) return "axe";
   if (LEAF_BLOCKS.has(id)) return "hand";
-  if (STONE_BLOCKS.has(id) || ORE_BY_BLOCK.has(id)) return "pickaxe";
+  if (STONE_BLOCKS.has(id) || ORE_BY_BLOCK.has(id) || HARD_BLOCKS[id]) return "pickaxe";
   if (DIRT_BLOCKS.has(id)) return "shovel";
   return "hand";
 }
 
 /** Drop için gereken minimum kazı seviyesi ("hand" = elle de düşer). */
 export function harvestLevelFor(id) {
+  if (HARD_BLOCKS[id]) return HARD_BLOCKS[id].level;
   const ore = ORE_BY_BLOCK.get(id);
   if (ore) return ore.tool;
   if (STONE_BLOCKS.has(id)) return "wood";
@@ -147,6 +155,8 @@ export function breakTicks(blockId, heldItem) {
   const cls = toolClassFor(blockId);
   const tier = toolTier(heldItem);
   const right = cls === "hand" || String(heldItem || "").includes(`_${cls}`);
+  const hard = HARD_BLOCKS[blockId];
+  if (hard) return (right && hard.ticks[tier]) || hard.fallback;
   if (LOG_BLOCKS.has(blockId)) {
     if (!right) return 60;
     return { netherite: 14, diamond: 16, iron: 20, stone: 26, wood: 32 }[tier] ?? 60;

@@ -23,6 +23,8 @@ export function createDefaultState(worker, ownerName = "") {
     skills: { mining: 0, woodcutting: 0, building: 0, crafting: 0 },
     auto: false,
     held: "minecraft:air",
+    equipment: { head: "", chest: "", legs: "", feet: "", offhand: "" }, // v5
+    flags: {}, // v5: houseBuilt, enchantTable, netherDone...
     blacklist: {},             // "x,y,z" -> kalan tick
     obstacleAttempts: {},      // "x,y,z" -> deneme sayısı
     trace: [],

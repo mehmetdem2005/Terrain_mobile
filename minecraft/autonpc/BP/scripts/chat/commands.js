@@ -8,6 +8,7 @@ import { spawnWorker, nearestWorker, stateSummary } from "../sys/workers.js";
 import { loadState, saveState } from "../core/persist.js";
 import { setTask, stopAll } from "../core/state.js";
 import { canonicalBlockId } from "../jobs/collect_block.js";
+import { getSelection } from "../sys/selection.js";
 
 const TREE_ALIASES = {
   mese: "oak", "meşe": "oak", oak: "oak",
@@ -28,7 +29,7 @@ function parseTree(raw) {
   return TREE_ALIASES[x] ?? TREE_ALIASES[raw] ?? "any";
 }
 
-const HELP = `${VERSION}: npc kitap | npc işçi | npc panel | npc odun [ağaç] [adet] [elma] | npc blok <id> <adet> | npc demir | npc elmas | npc ev | npc yürü | npc oto | npc durum | npc dur`;
+const HELP = `${VERSION}: npc kitap|işçi|panel|odun [tür] [adet] [elma]|blok <id> <adet>|demir|elmas|ev|avla [tür] [adet]|balık [adet]|düzleştir|doldur|hazine|nether|yürü|oto|durum|dur — alan seçimi: elinde ÇUBUK ile 2 köşeye dokun`;
 
 /** @returns true → mesaj tüketildi (chat'e düşmesin) */
 export function handleChat(player, message) {
@@ -92,6 +93,35 @@ export function handleChat(player, message) {
   if (["demir", "iron"].includes(cmd)) { setTask(st, "mine_ore", { group: "iron", amount: Number(parts[2]) || 16 }); say(player, "Demir görevi."); return done(); }
   if (["elmas", "diamond"].includes(cmd)) { setTask(st, "mine_ore", { group: "diamond", amount: Number(parts[2]) || 8 }); say(player, "Elmas görevi."); return done(); }
   if (["ev", "house"].includes(cmd)) { setTask(st, "build_house", {}); say(player, "Ev görevi."); return done(); }
+
+  // ---- v5 komutları ----
+  if (["avla", "av", "hunt"].includes(cmd)) {
+    setTask(st, "hunt", { animal: parts[2] || "any", amount: Number(parts[3]) || 3 });
+    say(player, `Av görevi: ${parts[2] || "any"} x${Number(parts[3]) || 3}`);
+    return done();
+  }
+  if (["balık", "balik", "fish"].includes(cmd)) {
+    setTask(st, "fish", { amount: Number(parts[2]) || 5 });
+    say(player, "Balık görevi verildi.");
+    return done();
+  }
+  if (["düzleştir", "duzlestir", "flatten"].includes(cmd)) {
+    const sel = getSelection(player.name);
+    if (!sel) { say(player, "Önce elinde ÇUBUK ile 2 köşe işaretle (hologram görünür)."); return true; }
+    setTask(st, "flatten", { region: sel, level: sel.min.y });
+    say(player, "Düzleştirme görevi verildi (seçili alan).");
+    return done();
+  }
+  if (["doldur", "fill"].includes(cmd)) {
+    const sel = getSelection(player.name);
+    if (!sel) { say(player, "Önce elinde ÇUBUK ile 2 köşe işaretle."); return true; }
+    setTask(st, "flatten", { region: sel, level: sel.max.y + 1 }); // yalnız doldurma: seviye üstü boş
+    say(player, "Çukur doldurma görevi verildi.");
+    return done();
+  }
+  if (["hazine", "treasure"].includes(cmd)) { setTask(st, "treasure", {}); say(player, "Hazine avı verildi (yakın sandıklar)."); return done(); }
+  if (["nether", "netherite"].includes(cmd)) { setTask(st, "nether_quest", {}); say(player, "Nether görevi verildi: portal -> debris -> netherite."); return done(); }
+  if (["konuş", "konus", "talk"].includes(cmd)) { say(player, "Bana yakınken normal chat'e yaz, cevap veririm."); return true; }
 
   say(player, "Komut anlaşılmadı. npc yardım");
   return true;

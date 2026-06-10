@@ -10,6 +10,11 @@ import { isGuide, giveGuide, ensureGuideOnSpawn } from "../ui/guide.js";
 import { openGuide, openWorkerPanel } from "../ui/panels.js";
 import { spawnWorker } from "./workers.js";
 import { handleChat } from "../chat/commands.js";
+import { tryTalk } from "../chat/talk.js";
+import { registerSelection } from "./selection.js";
+import { loadState } from "../core/persist.js";
+import { armorPoints } from "../combat/gear.js";
+import { shieldWindows } from "../combat/threats.js";
 
 const lastPanelTick = new Map(); // playerId -> system.currentTick
 
@@ -54,8 +59,33 @@ export function registerEvents() {
     if (ev.id === "autonpc:panel") openGuide(p);
   });
 
-  // chat komutları
+  // chat komutları + serbest sohbet
   world.beforeEvents.chatSend.subscribe((ev) => {
-    if (handleChat(ev.sender, ev.message)) ev.cancel = true;
+    if (handleChat(ev.sender, ev.message)) { ev.cancel = true; return; }
+    const sender = ev.sender, msg = ev.message;
+    system.run(() => { try { tryTalk(sender, msg); } catch (e) { /* sohbet opsiyonel */ } });
+  });
+
+  // v5: alan seçimi (çubuk + hologram)
+  registerSelection();
+
+  // v5: zırh + kalkan hasar azaltımı (custom entity'de armor attribute yok —
+  // vanilla formüle yakın telafi: zırh puanı*%4, kalkan penceresi +%60)
+  world.afterEvents.entityHurt.subscribe((ev) => {
+    try {
+      const w = ev.hurtEntity;
+      if (w?.typeId !== WORKER_ID) return;
+      const st = loadState(w);
+      let reduce = Math.min(0.8, armorPoints(st) * 0.04);
+      const cause = ev.damageSource?.cause ?? "";
+      if ((shieldWindows.get(w.id) ?? 0) > 0 && (cause === "entityExplosion" || cause === "blockExplosion" || cause === "projectile" || cause === "entityAttack")) {
+        reduce = Math.min(0.95, reduce + 0.6);
+        st.status = "Kalkan hasarı emdi!";
+      }
+      if (reduce <= 0 || ev.damage <= 0) return;
+      const hp = w.getComponent("minecraft:health");
+      if (!hp) return;
+      hp.setCurrentValue(Math.min(hp.effectiveMax, hp.currentValue + ev.damage * reduce));
+    } catch (e) { /* telafi opsiyonel */ }
   });
 }

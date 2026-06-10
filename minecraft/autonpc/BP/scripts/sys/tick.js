@@ -7,22 +7,12 @@ import { system } from "@minecraft/server";
 import { TICK_INTERVAL, PERSIST_EVERY } from "../core/config.js";
 import { allWorkers, updateName } from "./workers.js";
 import { loadState, saveState } from "../core/persist.js";
-import { tickBlacklist, setTask, nextTask } from "../core/state.js";
+import { tickBlacklist, nextTask } from "../core/state.js";
 import { runPickup } from "../work/drops.js";
 import { JOBS } from "../jobs/index.js";
-import { countInv, countAny } from "../core/state.js";
-import { LOG_BLOCKS } from "../core/registry.js";
 import { trace } from "../core/log.js";
-
-function chooseAutoTask(st) {
-  if (countAny(st, [...LOG_BLOCKS]) + countInv(st, "minecraft:oak_planks") < 8) {
-    return setTask(st, "gather_wood", { tree: "any", amount: 16, auto: true });
-  }
-  if (countInv(st, "minecraft:cobblestone") < 8) {
-    return setTask(st, "collect_block", { blockId: "minecraft:stone", amount: 8, auto: true });
-  }
-  return setTask(st, "mine_ore", { group: "iron", amount: 8, auto: true });
-}
+import { threatTick } from "../combat/threats.js";
+import { directAuto } from "../auto/director.js";
 
 let counter = 0;
 
@@ -34,8 +24,13 @@ export function startTick() {
       try {
         st = loadState(w);
         tickBlacklist(st);
+        // v5: hayatta kalma refleksi her şeyden önce (creeper/kalkan/kontra)
+        if (threatTick(w, st)) {
+          if (counter % 10 === 0) updateName(w, st);
+          continue;
+        }
         if (!runPickup(w, st)) {
-          if (!st.task && st.auto) chooseAutoTask(st);
+          if (!st.task && st.auto) directAuto(w, st);
           const t = st.task;
           if (t) {
             const job = JOBS[t.type];

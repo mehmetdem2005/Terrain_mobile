@@ -10,8 +10,16 @@ export function standable(dim, x, y, z) {
   const feet = blockIdAt(dim, { x, y, z });
   const head = blockIdAt(dim, { x, y: y + 1, z });
   const below = blockIdAt(dim, { x, y: y - 1, z });
+  // v5: YÜZME — ayaklar suda, kafa hava: su yüzeyi hücresi geçerli duruş
+  if (feet === "minecraft:water" || feet === "minecraft:flowing_water") {
+    return isPassable(head) && head !== "minecraft:water";
+  }
   if (!isPassable(feet) || !isPassable(head)) return false;
-  if (!isSolid(below)) return false;
+  if (!isSolid(below)) {
+    // su üstü: altı su ise yüzerek geçilebilir
+    if (below === "minecraft:water" || below === "minecraft:flowing_water") return true;
+    return false;
+  }
   if (isHazard(below) || isHazard(feet) || isLiquid(feet)) return false;
   return true;
 }
