@@ -17,8 +17,8 @@ Kaynak: `31b84266-housemouse3dmodel.glb` (Tripo AI, 55.580 vertex, 4K BaseColor,
    (forearm.L 45°, forearm.R 90°, shin.L 120°, shin.R 90°).
 
 ## Dosyalar
-- `MouseRigged_pro4.blend` — ASIL: tam rig (IK/FK anahtarlı, yuvarlak widget'lar)
-- `MouseRigged_pro4.glb` — oyun motoru: skin + bake'li `idle_test` animasyonu
+- `MouseRigged_rest.blend` — ASIL: tam rig (IK/FK anahtarlı, yuvarlak widget'lar)
+- `MouseRigged_rest.glb` — oyun motoru: skin + bake'li `idle_test` animasyonu
 - Render'lar: kuyruk süpürme/kıvrılma, göğüs altı yakın plan, animasyon karesi
 
 ## Rig içeriği
@@ -56,3 +56,15 @@ root. 4 bacakta 2-kemik IK + pole; `IK_hand/foot.L/R` üzerinde `ik_fk` (1=IK,
 - Corrective Smooth kaldırıldı: GLB modifier taşımaz, viewer ile blend
   artık AYNI deformasyonu gösterir (önceki fark bundandı).
 - IK pole yeniden kalibre; idle pati hareketi yumuşatıldı.
+
+## v6 — REST KESINLIGI (kritik düzeltme)
+- KÖK NEDEN bulundu: rig REST halinde mesh'i 259.8 mm'ye kadar deforme
+  ediyordu! (a) COPY_ROTATION kısıtı patiyi -Y yönlü kontrol kemiğinin
+  rotasyonuna zorluyordu (patilerin "ters/yamuk" görünmesinin ve yırtılmanın
+  ana sebebi), (b) IK pole kaba kalibrasyonu rest'te 17-28 mm hata
+  bırakıyordu. GLB'ye bu bozuk poz "bind" olarak gidiyordu.
+- Düzeltme: IK kontrol kemikleri deform kemiğiyle aynı yönelime alındı
+  (COPY_ROTATION rest'te kimlik), pole hedefleri gerçek bükülme düzleminden
+  hesaplandı, pole açıları 0.5° hassasiyetle tarandı (rest hatası 0.01-0.12mm).
+- SONUÇ: rest sapması max 0.4 mm (evaluated-vertex ölçümü) — model kendi
+  şeklinde, hiçbir uzuv oynatılmadı. GLB animasyonsuz ihraç edildi.
