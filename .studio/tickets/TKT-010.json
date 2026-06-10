@@ -16,11 +16,31 @@
     "No unverified API claims (Honesty gate)"
   ],
   "active_roles": [
-    "Producer", "Tech Director", "Bug Hunter Lead", "Defect Pattern Specialist",
-    "State Corruption Specialist", "Lead Performance Engineer", "Mobile Performance Specialist",
-    "Allocation Auditor", "Crash Auditor", "Reproduction Engineer", "UndoRedo Specialist",
-    "Honesty Auditor", "Quality Gate Officer", "Audit Trail Officer"
+    "Producer",
+    "Tech Director",
+    "Bug Hunter Lead",
+    "Defect Pattern Specialist",
+    "State Corruption Specialist",
+    "Lead Performance Engineer",
+    "Mobile Performance Specialist",
+    "Allocation Auditor",
+    "Crash Auditor",
+    "Reproduction Engineer",
+    "UndoRedo Specialist",
+    "Honesty Auditor",
+    "Quality Gate Officer",
+    "Audit Trail Officer"
   ],
-  "state": "IN_PROGRESS",
-  "opened": "2026-06-10"
+  "state": "AUDIT_COMPLETE",
+  "opened": "2026-06-10",
+  "findings": {
+    "S1": 1,
+    "S2": 2,
+    "S3": 8,
+    "S4": 5,
+    "P1": 5,
+    "P2": 7,
+    "P3": 8
+  },
+  "evidence": "test/run_all.sh 15/15 ALL TESTS PASSED on real Godot 4.6.2; report: .studio/tickets/TKT-010/audit-report.md"
 }
