@@ -9,6 +9,7 @@ import { tickFish } from "./fish.js";
 import { tickFlatten } from "./flatten.js";
 import { tickTreasure } from "./treasure.js";
 import { tickNetherQuest } from "./nether_quest.js";
+import { tickRescue } from "./rescue.js";
 
 export const JOBS = {
   gather_wood: tickGatherWood,
@@ -22,4 +23,5 @@ export const JOBS = {
   flatten: tickFlatten,
   treasure: tickTreasure,
   nether_quest: tickNetherQuest,
+  rescue: tickRescue,
 };

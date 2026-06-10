@@ -7,13 +7,21 @@ import { setTask, countInv, countAny } from "../core/state.js";
 import { LOG_BLOCKS } from "../core/registry.js";
 import { craftCombatSet, equipBestArmor } from "../combat/gear.js";
 import { craft } from "../core/recipes.js";
+import { ensureCraftingTable, craftTool } from "../work/tools.js";
+import { toolItemId } from "../core/registry.js";
+import { angry } from "../chat/personality.js";
 
 export function directAuto(worker, st) {
   st.flags = st.flags ?? {};
   const logs = countAny(st, [...LOG_BLOCKS]) + countInv(st, "minecraft:oak_planks");
 
   if (logs < 12) return setTask(st, "gather_wood", { tree: "any", amount: 16, auto: true });
+  // v5.2: odun biter bitmez masa kur + tahta/taş kazma zinciri (kullanıcı akışı)
+  ensureCraftingTable(worker, st);
+  if (countInv(st, toolItemId("wood", "pickaxe")) + countInv(st, toolItemId("stone", "pickaxe")) < 1) craftTool(st, "wood", "pickaxe");
   if (countInv(st, "minecraft:cobblestone") < 12) return setTask(st, "collect_block", { blockId: "minecraft:stone", amount: 16, auto: true });
+  craftTool(st, "stone", "pickaxe"); // taş kazma → madene in
+  if (countInv(st, "minecraft:iron_ingot") + countInv(st, "minecraft:raw_iron") < 12) angry(st, "mine");
   if (countInv(st, "minecraft:iron_ingot") + countInv(st, "minecraft:raw_iron") < 12) {
     return setTask(st, "mine_ore", { group: "iron", amount: 12, auto: true });
   }

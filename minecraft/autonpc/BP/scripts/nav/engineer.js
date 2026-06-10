@@ -14,6 +14,7 @@ import { isSolid, isPassable, isLiquid, isBreakable, isHazard } from "../core/re
 import { breakStep } from "../work/breaker.js";
 import { countInv, removeInv } from "../core/state.js";
 import { yawToward } from "../core/math.js";
+import { requestHelp } from "../sys/coop.js";
 
 const FILLERS = ["minecraft:cobblestone", "minecraft:dirt", "minecraft:netherrack", "minecraft:cobbled_deepslate", "minecraft:oak_planks"];
 const DIRS4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
@@ -65,7 +66,7 @@ export function engineerStep(worker, st, target) {
   // Elle taş kazmak 110 tick/blok sürer; bu meşru çalışmadır. Yalnız sürekli
   // yön-değiştirme (hiçbir kazı/koyma/adım mümkün değil) stuck sayılır.
   if (++e.ticks > 6000) { eng.delete(worker.id); return { stuck: true }; }
-  if (e.rot > 16) { eng.delete(worker.id); return { stuck: true }; }
+  if (e.rot > 16) { eng.delete(worker.id); requestHelp(worker, st, "yol-tıkalı"); return { stuck: true }; }
   const rotate = () => { e.dirIdx = (e.dirIdx + 1); e.rot++; return { working: true }; };
   const productive = () => { e.rot = 0; return { working: true }; };
 
@@ -85,6 +86,21 @@ export function engineerStep(worker, st, target) {
     isSolid(blockIdAt(dim, { x: fx + qx, y: fy, z: fz + qz }))
     || isSolid(blockIdAt(dim, { x: fx + qx, y: fy + 1, z: fz + qz })));
 
+  // v5.2 PİLLAR-UP: hedef yukarıda, etraf açık (duvar yok) ve dolgu varsa
+  // blok üst üste koyarak yüksel — "zıpla + altına koy" (gerçek oyuncu tekniği)
+  if (dy >= 2 && !boxed && filler(st)) {
+    const above = blockIdAt(dim, { x: fx, y: fy + 2, z: fz });
+    if (!isSolid(above)) {
+      const f = filler(st);
+      removeInv(st, f, 1);
+      worker.teleport({ x: fx + 0.5, y: fy + 1, z: fz + 0.5 }, { dimension: dim });
+      setBlock(dim, { x: fx, y: fy, z: fz }, f);
+      playSoundAt(dim, "dig.stone", { x: fx, y: fy, z: fz });
+      try { worker.playAnimation("animation.autonpc.worker.swing"); } catch (err) { /* opsiyonel */ }
+      st.status = "Mühendis: pillar-up (blok üstüne blok)";
+      return productive();
+    }
+  }
   // ---- YUKARI / ÇUKURDAN ÇIKIŞ: basamak-kaz (gerekirse pillar) ----
   // dy>=1: hedef yüzeydeyse son basamağa kadar TIRMAN (yeraltında bitirme)
   if (dy >= 1 || boxed) {

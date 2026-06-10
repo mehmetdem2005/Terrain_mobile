@@ -5,6 +5,7 @@ import { say } from "../core/log.js";
 import { floorV, dist } from "../core/math.js";
 import { loadState, saveState } from "../core/persist.js";
 import { addInv, invText } from "../core/state.js";
+import { pickName, angry } from "../chat/personality.js";
 
 export function isWorker(e) { return !!e && e.typeId === WORKER_ID; }
 
@@ -30,7 +31,7 @@ export function nearestWorker(player, max = 96) {
 }
 
 export function updateName(worker, st) {
-  try { worker.nameTag = `§bAutoNPC ${VERSION}§r\n§7${st.status}`; } catch (e) { /* geçersiz */ }
+  try { worker.nameTag = `§6${st.npcName ?? "AutoNPC"}§r §8${VERSION}§r\n§7${st.status}`; } catch (e) { /* geçersiz */ }
 }
 
 export function spawnWorker(player) {
@@ -40,12 +41,15 @@ export function spawnWorker(player) {
     try { w.addTag(TAG_WORKER); } catch (e) { /* opsiyonel */ }
     const st = loadState(w);
     st.owner = player.name;
+    st.npcName = pickName();   // v5.2: rastgele karakter ismi
+    st._wid = w.id;
     st.base = floorV(player.location);
     st.status = "Doğdu; emir bekliyor";
     addInv(st, "minecraft:stick", 2);
     saveState(w, st);
     updateName(w, st);
-    say(player, `AutoNPC ${VERSION} işçi oluşturuldu. Etkileşim = panel; chat: npc yardım`);
+    angry(st, "spawn");
+    say(player, `${st.npcName} göreve hazır. Etkileşim = panel; chat: npc yardım`);
     return w;
   } catch (e) {
     say(player, `İşçi oluşturulamadı: ${e}`);

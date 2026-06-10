@@ -51,7 +51,67 @@
               "subject": "other",
               "value": "player"
             },
-            "interact_text": "Görev Paneli Aç"
+            "interact_text": "G\u00f6rev Paneli A\u00e7"
+          }
+        ]
+      }
+    },
+    "component_groups": {
+      "autonpc:v0": {
+        "minecraft:variant": {
+          "value": 0
+        }
+      },
+      "autonpc:v1": {
+        "minecraft:variant": {
+          "value": 1
+        }
+      },
+      "autonpc:v2": {
+        "minecraft:variant": {
+          "value": 2
+        }
+      },
+      "autonpc:v3": {
+        "minecraft:variant": {
+          "value": 3
+        }
+      }
+    },
+    "events": {
+      "minecraft:entity_spawned": {
+        "randomize": [
+          {
+            "weight": 1,
+            "add": {
+              "component_groups": [
+                "autonpc:v0"
+              ]
+            }
+          },
+          {
+            "weight": 1,
+            "add": {
+              "component_groups": [
+                "autonpc:v1"
+              ]
+            }
+          },
+          {
+            "weight": 1,
+            "add": {
+              "component_groups": [
+                "autonpc:v2"
+              ]
+            }
+          },
+          {
+            "weight": 1,
+            "add": {
+              "component_groups": [
+                "autonpc:v3"
+              ]
+            }
           }
         ]
       }

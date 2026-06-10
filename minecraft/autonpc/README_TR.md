@@ -88,3 +88,25 @@ bedrock'ta yön değiştirir, üretken-eylemsizlik 16 yönde sürerse dürüstç
 'yol yok' der. Eğitim/kanıt senaryoları (sim S12-S15): aşılamaz duvar→tünel,
 6-derin kuyu→yüzeye çıkış, 5-geniş kanyon→köprü (hiç düşmeden), lav nehri→
 mühür+hasarsız geçiş. NİHAİ: 37/37 PASS — build kapısı sim'e bağlı.
+
+## v5.2.0 — DEVRİM TURU: işbirliği, uzak görüş, kişilik, performans
+- **LAG kökü:** tehdit radarı işçi başına HER tick entity sorgusuydu → 3 tick'te
+  bire indi; ≥3 işçide görevler dönüşümlü tick'lerde (stagger); A* düğüm tavanı
+  450, replan cooldown 35 → oto modda çoklu işçi lag'i kesildi
+- **İŞBİRLİĞİ PROTOKOLÜ (sys/coop.js):** takılan işçi (watchdog/mühendis)
+  İMDAT yayınlar; boştaki işçi çağrıyı sahiplenir, gider, etrafını kazıp
+  kurtarır (jobs/rescue.js) — sim S16: 12 blok koşup duvarı kazdı ✓
+- **UZAK GÖRÜŞ:** tarama yarıçapları 32/48/32 (bütçeli tarayıcı sayesinde
+  lag'sız) — "hedef bulamıyor, duruyor" bitti
+- **PİLLAR-UP:** hedef yukarıda + etraf açık + dolgu varsa blok üstüne blok
+  koyarak yükselir (sim S17 ✓); mühendis zaten tünel/köprü/mühür biliyor
+- **CRAFT MASASI GERÇEK:** alet/silah üretimi masasız olmaz — 6 blok içinde
+  masa yoksa craft eder, YERE KOYAR, başında üretir
+- **Oto akış netleşti:** odun → masa → tahta kazma → taş → TAŞ KAZMA →
+  madene in (demir+kömür, zikzak+meşale) → erit → savaş seti → ...
+- **KİŞİLİK:** her işçiye rastgele isim (Kazma Kemal, Somurtkan Selim...);
+  olaylara asabi TR mesajlar (spawn/takılma/imdat/kurtarma/hasar/creeper)
+- **SKİNLER:** worker dokusundan 3 yeni renk varyantı üretildi (PIL hue-shift);
+  BP variant + spawn randomize + render controller `query.variant` → her işçi
+  4 görünümden rastgele doğar
+- NİHAİ: **42/42 PASS** (S16 işbirliği + S17 pillar dahil)

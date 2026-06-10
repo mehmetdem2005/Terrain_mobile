@@ -10,9 +10,11 @@ export const PANEL_PROP = `${NS}:panel_req`;
 
 // --- tick bütçeleri (D6 düzeltmesi: hiçbir worker tick'i sınırsız iş yapamaz)
 export const TICK_INTERVAL = 1;
-export const SCAN_BLOCKS_PER_TICK = 350;   // tarayıcı blok-okuma bütçesi / worker / tick
-export const ASTAR_MAX_NODES = 700;        // tek plan için düğüm sınırı
-export const REPLAN_COOLDOWN = 20;         // tick; ardışık A* planları arası
+export const SCAN_BLOCKS_PER_TICK = 250;   // tarayıcı blok-okuma bütçesi / worker / tick
+export const THREAT_EVERY = 3;             // v5.2 lag: tehdit radari kaç tick'te bir
+export const JOB_STRIDE_FROM = 3;          // v5.2 lag: bu sayıda işçiden itibaren görevler dönüşümlü tick'lerde
+export const ASTAR_MAX_NODES = 450;        // v5.2 lag: plan başına düğüm tavanı düştü        // tek plan için düğüm sınırı
+export const REPLAN_COOLDOWN = 35;         // tick; ardışık A* planları arası
 export const PERSIST_EVERY = 20;           // kirli state kaç tick'te bir yazılır
 
 // --- hareket
@@ -30,9 +32,9 @@ export const PICKUP_SEARCH_RADIUS = 4.0;
 export const DROP_WAIT_TICKS = 30;
 
 // --- tarama yarıçapları
-export const SCAN_RADIUS = 14;
-export const TREE_SCAN_RADIUS = 18;
-export const ORE_SCAN_RADIUS = 20;
+export const SCAN_RADIUS = 32;             // v5.2 uzak görüş
+export const TREE_SCAN_RADIUS = 48;        // v5.2 uzak görüş
+export const ORE_SCAN_RADIUS = 32;         // v5.2 uzak görüş
 
 // --- görev
 export const OBSTACLE_MAX_PER_TARGET = 8;

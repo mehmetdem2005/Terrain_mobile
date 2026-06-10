@@ -4,7 +4,7 @@
  * Hata izolasyonu: bir worker'ın istisnası diğerlerini durdurmaz.
  */
 import { system } from "@minecraft/server";
-import { TICK_INTERVAL, PERSIST_EVERY } from "../core/config.js";
+import { TICK_INTERVAL, PERSIST_EVERY, THREAT_EVERY, JOB_STRIDE_FROM } from "../core/config.js";
 import { allWorkers, updateName } from "./workers.js";
 import { loadState, saveState } from "../core/persist.js";
 import { tickBlacklist, nextTask } from "../core/state.js";
@@ -13,6 +13,8 @@ import { JOBS } from "../jobs/index.js";
 import { trace } from "../core/log.js";
 import { threatTick } from "../combat/threats.js";
 import { directAuto } from "../auto/director.js";
+import { tickCalls, claimRescue, requestHelp } from "./coop.js";
+import { angry } from "../chat/personality.js";
 import { resetAllScans } from "../work/scanner.js";
 import { clearNav } from "../nav/locomotion.js";
 import { blockIdAt } from "./blocks.js";
@@ -58,6 +60,8 @@ function watchdog(w, st) {
     } catch (err) { /* kurtarma opsiyonel */ }
     trace(st, "watchdog:nudge");
     st.status = `${st.status} [yeniden deneniyor]`;
+    requestHelp(w, st, st.task.type); // v5.2: arkadaşlarına haber ver
+    angry(st, "stuck");
     st.dirty = true;
   } else if (e.ticks >= ABORT_AT) {
     trace(st, `watchdog:abort:${st.task.type}`);
@@ -71,17 +75,33 @@ function watchdog(w, st) {
 export function startTick() {
   system.runInterval(() => {
     counter++;
-    for (const w of allWorkers()) {
+    tickCalls();
+    const ws = allWorkers();
+    // v5.2 LAG: çok işçide görevler dönüşümlü tick'lerde koşar (stagger)
+    const stride = ws.length >= JOB_STRIDE_FROM ? 2 : 1;
+    for (let wi = 0; wi < ws.length; wi++) {
+      const w = ws[wi];
       let st;
       try {
         st = loadState(w);
         tickBlacklist(st);
-        // v5: hayatta kalma refleksi her şeyden önce (creeper/kalkan/kontra)
-        if (threatTick(w, st)) {
+        if ((counter + wi) % stride !== 0) { if (counter % PERSIST_EVERY === 0) saveState(w, st); continue; }
+        // v5.2 LAG: tehdit radarı her THREAT_EVERY tick'te bir (entity sorgusu pahalı)
+        if ((counter + wi) % THREAT_EVERY === 0 && threatTick(w, st)) {
           if (counter % 10 === 0) updateName(w, st);
           continue;
         }
         if (!runPickup(w, st)) {
+          // v5.2 İŞBİRLİĞİ: boştaysan (veya otomodda görevsizsen) imdat çağrısını sahiplen
+          if (!st.task) {
+            const call = claimRescue(w);
+            if (call) {
+              st.task = { type: "rescue", data: { stuckId: call.stuckId } };
+              st.status = "İmdat çağrısına gidiyor";
+              angry(st, "rescue_go");
+              st.dirty = true;
+            }
+          }
           if (!st.task && st.auto) directAuto(w, st);
           const t = st.task;
           if (t) {

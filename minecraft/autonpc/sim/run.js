@@ -239,3 +239,38 @@ check("S15c lav mühürlendi/kapaklandı", [162,163,164].some((x)=>ow.getBlockId
   console.log("SIM_OK_ENGINEER");
 }
 
+
+// ========== v5.2: İŞBİRLİĞİ + PİLLAR senaryoları ==========
+const coop = await import("../BP/scripts/sys/coop.js");
+
+// ---------- S16: imdat çağrısı → diğer işçi kurtarmaya gider ----------
+stateMod.stopAll(stA); stateMod.stopAll(stB);
+stA.auto = false; stB.auto = false;
+w.teleport({ x: 200.5, y: 64, z: 200.5 }, {});
+w2.teleport({ x: 188.5, y: 64, z: 200.5 }, {});
+for (const [dx, dz] of [[1,0],[-1,0],[0,1],[0,-1]]) for (const dy of [0,1])
+  ow.setBlockId(200+dx, 64+dy, 200+dz, "minecraft:stone"); // A taş kutuda
+coop.requestHelp(w, stA, "test-mahsur");
+__mock.tick(2500);
+const nearStuck = Math.hypot(w2.location.x - 200.5, w2.location.z - 200.5);
+check("S16a kurtarıcı imdada KOŞTU", nearStuck < 4.5, `mesafe=${nearStuck.toFixed(1)}`);
+const opened = [[1,0],[-1,0],[0,1],[0,-1]].some(([dx,dz]) => ow.getBlockId(200+dx,64,200+dz) !== "minecraft:stone");
+check("S16b kurtarıcı duvarı kazdı", opened);
+check("S16c kurtarma görevi kapandı", !stB.task || stB.task.type !== "rescue", stB.status);
+
+// ---------- S17: PİLLAR-UP — bloğa basa basa yüksel ----------
+stateMod.stopAll(stA);
+w.teleport({ x: 220.5, y: 64, z: 220.5 }, {});
+for (let dx=-1; dx<=1; dx++) for (let dz=-1; dz<=1; dz++) ow.setBlockId(224+dx, 69, 220+dz, "minecraft:stone"); // yüksek platform
+stateMod.addInv(stA, "minecraft:cobblestone", 12);
+stateMod.setTask(stA, "walk_test", { target: { x: 224, y: 70, z: 220 } });
+__mock.tick(3500);
+check("S17a pillar/basamakla yükseldi", w.location.y >= 69, `y=${w.location.y.toFixed(1)}`);
+check("S17b yüksek hedefe vardı", !stA.task && /tamamlandı/i.test(stA.status), stA.status);
+
+{
+  const fz = results.filter((r) => !r.ok);
+  console.log(`\nv5.2 NİHAİ ${results.length - fz.length}/${results.length} PASS`);
+  if (fz.length) { console.log("SIM_FAILED"); process.exit(1); }
+  console.log("SIM_OK_V52");
+}

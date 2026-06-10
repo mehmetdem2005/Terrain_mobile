@@ -64,7 +64,7 @@ export function tickMineOre(worker, st, data) {
     resetScan(worker.id, "ore");
     return finishTask(st, `${ore.label} tamam x${amount}`);
   }
-  if (!ensureToolFor(st, ore.ores[0])) return; // alt-görev itildi
+  if (!ensureToolFor(worker, st, ore.ores[0])) return; // alt-görev itildi
 
   // hedef cevher
   let target = data.target;
@@ -86,7 +86,7 @@ export function tickMineOre(worker, st, data) {
   const stair = nextStairBlock(worker, data);
   const id = blockIdAt(worker.dimension, stair);
   if (isAir(id)) { advanceStair(data); st.status = `${ore.label}: tünel ilerliyor`; st.dirty = true; return; }
-  if (!ensureToolFor(st, id)) return;
+  if (!ensureToolFor(worker, st, id)) return;
   const r = approachAndBreak(worker, st, stair, { drop: dropFor(id), skill: "mining" }, `${ore.label} tüneli`);
   if (r.broke || r.gone) {
     advanceStair(data);

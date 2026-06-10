@@ -7,7 +7,10 @@
         "default": "entity_alphatest"
       },
       "textures": {
-        "default": "textures/entity/autonpc/worker"
+        "default": "textures/entity/autonpc/worker",
+        "v1": "textures/entity/autonpc/worker1",
+        "v2": "textures/entity/autonpc/worker2",
+        "v3": "textures/entity/autonpc/worker3"
       },
       "geometry": {
         "default": "geometry.autonpc.worker"

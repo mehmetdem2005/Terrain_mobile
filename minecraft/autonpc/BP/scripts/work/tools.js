@@ -7,9 +7,36 @@ import {
   LOG_BLOCKS,
 } from "../core/registry.js";
 import { countInv, addInv, removeInv, pushSubTask } from "../core/state.js";
+import { blockIdAt, setBlock, playSoundAt } from "../sys/blocks.js";
+import { isAir } from "../core/registry.js";
+import { craft } from "../core/recipes.js";
 import { equipMainhand } from "../sys/equipment.js";
 
 function totalLogs(st) { return [...LOG_BLOCKS].reduce((n, id) => n + countInv(st, id), 0); }
+
+/** v5.2: alet/silah üretimi GERÇEK craft masası başında olur.
+ *  6 blok içinde masa yoksa envanterden (gerekirse craft edip) YERE KOYAR. */
+export function ensureCraftingTable(worker, st) {
+  const dim = worker.dimension;
+  const f = { x: Math.floor(worker.location.x), y: Math.floor(worker.location.y), z: Math.floor(worker.location.z) };
+  for (let dx = -6; dx <= 6; dx++) for (let dz = -6; dz <= 6; dz++) for (let dy = -1; dy <= 2; dy++) {
+    if (blockIdAt(dim, { x: f.x + dx, y: f.y + dy, z: f.z + dz }) === "minecraft:crafting_table") return true;
+  }
+  if (countInv(st, "minecraft:crafting_table") < 1 && !craft(st, "minecraft:crafting_table").ok) return false;
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1]]) {
+    const p = { x: f.x + dx, y: f.y, z: f.z + dz };
+    if (isAir(blockIdAt(dim, p)) && !isAir(blockIdAt(dim, { x: p.x, y: p.y - 1, z: p.z }))) {
+      removeInv(st, "minecraft:crafting_table", 1);
+      setBlock(dim, p, "minecraft:crafting_table");
+      playSoundAt(dim, "dig.wood", p);
+      try { worker.playAnimation("animation.autonpc.worker.swing"); } catch (e) { /* opsiyonel */ }
+      st.status = "Craft masasını yere koydu";
+      st.dirty = true;
+      return true;
+    }
+  }
+  return countInv(st, "minecraft:crafting_table") > 0; // koyacak yer yok ama masa elde
+}
 
 export function bestToolFor(st, blockId) {
   const cls = toolClassFor(blockId);
@@ -74,7 +101,12 @@ export function craftTool(st, tier, cls) {
  * Blok için yeterli alet garantile. Yoksa craft dener; malzeme yoksa alt-görev
  * iter ve false döner (görev bir sonraki tick alt-görevden devam eder).
  */
-export function ensureToolFor(st, blockId) {
+export function ensureToolFor(worker, st, blockId) {
+  // v5.2: masasız alet üretimi yok (RealWork) — masa kur/koy, sonra üret
+  if (!ensureCraftingTable(worker, st)) {
+    pushSubTask(st, "gather_wood", { tree: "any", amount: 4, reason: "craft-masası" });
+    return false;
+  }
   const need = harvestLevelFor(blockId);
   if (need === "hand") return true;
   if (bestToolFor(st, blockId) !== "minecraft:air") {

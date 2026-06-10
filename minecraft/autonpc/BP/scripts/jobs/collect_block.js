@@ -25,7 +25,7 @@ export function tickCollectBlock(worker, st, data) {
     return finishTask(st, `${blockId.replace("minecraft:", "")} tamam x${amount}`);
   }
   if (!isBreakable(blockId)) return finishTask(st, `Toplanamaz blok: ${blockId}`);
-  if (!ensureToolFor(st, blockId)) return; // alt-görev itildi
+  if (!ensureToolFor(worker, st, blockId)) return; // alt-görev itildi
 
   let target = data.target;
   if (!target || blockIdAt(worker.dimension, target) !== blockId || isBlacklisted(st, target)) {
