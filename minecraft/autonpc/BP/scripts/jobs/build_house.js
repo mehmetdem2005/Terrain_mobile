@@ -93,29 +93,85 @@ function depositToChest(worker, st, chestPos) {
   } catch (e) { return 0; }
 }
 
-export function tickBuildHouse(worker, st, data) {
-  if (totalWood(st) < NEED_WOOD) return pushSubTask(st, "gather_wood", { tree: "any", amount: NEED_WOOD, reason: "ev" });
-  if (countInv(st, "minecraft:cobblestone") < NEED_STONE) {
-    return pushSubTask(st, "collect_block", { blockId: "minecraft:stone", amount: NEED_STONE, reason: "ev" });
+/** SIM-S7 kök düzeltmesi: ihtiyaç = KALAN plan; toplam değil.
+ *  Eski kod her tick toplam malzemeyi şart koşuyordu → duvar harcandıkça
+ *  sonsuz 'taş topla' alt-görev döngüsü + NPC kendi evinin altına kuyu. */
+function remainingNeeds(plan, index, st) {
+  const need = {};
+  for (let i = index; i < plan.length; i++) {
+    const id = plan[i][3];
+    need[id] = (need[id] ?? 0) + 1;
   }
-  craftPlanks(st, NEED_WOOD);
-  for (const it of ["minecraft:chest", "minecraft:chest", "minecraft:crafting_table", "minecraft:furnace", "minecraft:bed"]) {
-    if (countInv(st, it) < 1) craft(st, it);
-  }
+  return need;
+}
 
+export function tickBuildHouse(worker, st, data) {
   if (!data.plan) {
+    // plan kurulumu için başlangıç stoğu (bir kere)
+    if (totalWood(st) < NEED_WOOD) return pushSubTask(st, "gather_wood", { tree: "any", amount: NEED_WOOD, reason: "ev" });
+    if (countInv(st, "minecraft:cobblestone") < NEED_STONE) {
+      return pushSubTask(st, "collect_block", { blockId: "minecraft:stone", amount: NEED_STONE, reason: "ev" });
+    }
     data.plan = housePlan(st.base, st);
     data.index = 0;
     st.dirty = true;
+  }
+  const need = remainingNeeds(data.plan, data.index ?? 0, st);
+  // kalan plank ihtiyacı: loglardan üret
+  if ((need["minecraft:oak_planks"] ?? 0) > countInv(st, "minecraft:oak_planks")) {
+    if (!craftPlanks(st, need["minecraft:oak_planks"])) {
+      // SÖZLEŞME: gather_wood.amount = hedef TOPLAM log sayısı (delta değil!)
+      const logsNow = totalWood(st) - countInv(st, "minecraft:oak_planks");
+      return pushSubTask(st, "gather_wood", { tree: "any", amount: logsNow + 6, reason: "ev-plank" });
+    }
+  }
+  // kalan taş ihtiyacı (yalnız plan hâlâ taş istiyorsa)
+  if ((need["minecraft:cobblestone"] ?? 0) > countInv(st, "minecraft:cobblestone")) {
+    // SIM ping-pong kök düzeltmesi: collect_block.amount = hedef TOPLAM.
+    return pushSubTask(st, "collect_block", {
+      blockId: "minecraft:stone",
+      amount: need["minecraft:cobblestone"],
+      reason: "ev-taş",
+    });
+  }
+  // iç eşyalar: yalnız kalan planda geçenler craft edilir (yatak yün yoksa atlanır)
+  for (const it of ["minecraft:chest", "minecraft:crafting_table", "minecraft:furnace", "minecraft:bed"]) {
+    if ((need[it] ?? 0) > countInv(st, it)) craft(st, it);
   }
   while (data.index < data.plan.length) {
     const [x, y, z, id] = data.plan[data.index];
     const cur = blockIdAt(worker.dimension, { x, y, z });
     if (!isAir(cur)) { data.index++; continue; }
-    if (horizDist(worker.location, { x: x + 0.5, z: z + 0.5 }) > PLACE_RANGE || Math.abs(worker.location.y - y) > 4) {
+    const horizOk = horizDist(worker.location, { x: x + 0.5, z: z + 0.5 }) <= PLACE_RANGE;
+    const dy = y - Math.floor(worker.location.y);
+    if (!horizOk || Math.abs(dy) > 4) {
+      // GERÇEK OYUNCU TEKNİĞİ (SIM-S7a): hedef yukarıda ve yatayda
+      // yakınsa pillar-jump — zıpla, ayağının altına blok koy.
+      if (horizOk && dy > 4) {
+        const filler = ["minecraft:cobblestone", "minecraft:dirt", "minecraft:oak_planks"]
+          .find((f) => countInv(st, f) > 0);
+        if (filler) {
+          const fx = Math.floor(worker.location.x), fy = Math.floor(worker.location.y), fz = Math.floor(worker.location.z);
+          removeInv(st, filler, 1);
+          worker.teleport({ x: fx + 0.5, y: fy + 1, z: fz + 0.5 }, { dimension: worker.dimension });
+          setBlock(worker.dimension, { x: fx, y: fy, z: fz }, filler);
+          playSoundAt(worker.dimension, "dig.stone", { x: fx, y: fy, z: fz });
+          st.status = `Ev: iskele basamağı (pillar-jump) y=${fy + 1}`;
+          st.dirty = true;
+          return;
+        }
+      }
       st.status = `Ev: bloğa yürüyor ${data.index}/${data.plan.length}`;
       const r = walkTo(worker, { x, y, z }, { reach: 2 });
       if (r.blocked) { data.index++; st.dirty = true; }
+      return;
+    }
+    // SIM-S7 kök düzeltmesi: NPC kendi ayak/kafa hücresine blok basıp
+    // kendini GÖMÜYORDU. Aynı hücredeyse önce kenara çekil.
+    const wf = { x: Math.floor(worker.location.x), y: Math.floor(worker.location.y), z: Math.floor(worker.location.z) };
+    if ((x === wf.x && z === wf.z && (y === wf.y || y === wf.y + 1))) {
+      st.status = "Ev: kendi hücresinden kenara çekiliyor";
+      walkTo(worker, { x: x + 2, y: wf.y, z: z + 2 }, { reach: 0, arrive: 1.0 });
       return;
     }
     if (removeInv(st, id, 1) <= 0) { data.index++; continue; }

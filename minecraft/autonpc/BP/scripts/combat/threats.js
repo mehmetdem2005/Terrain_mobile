@@ -19,6 +19,7 @@ const HOSTILES = new Set([
 ]);
 
 export const shieldWindows = new Map(); // workerId -> kalan tick (events.js hasar telafisinde okur)
+const engagement = new Map(); // workerId -> creeper kuşatma tick sayacı
 
 function nearestHostile(worker, radius) {
   let best, bd = radius;
@@ -45,9 +46,19 @@ export function threatTick(worker, st) {
 
   if (hostile.typeId === "minecraft:creeper") {
     if (d <= 4.5) {
-      // patlama an meselesi: kalkanı kaldır, yüzünü dön, geri adım
+      // SIM kök bulgusu: süresiz geri çekilme NPC'yi sonsuza dek işsiz
+      // bırakabilir (patlamayan/sıkışan creeper). 120 tick kuşatmadan sonra
+      // strateji değişir: kalkan açıkken KILIÇLA SALDIR ve bitir.
+      const eng = (engagement.get(worker.id) ?? 0) + 1;
+      engagement.set(worker.id, eng);
       equipShield(worker, st, true);
       shieldWindows.set(worker.id, 40);
+      if (eng > 120) {
+        st.status = "Creeper bitmiyor → kılıçla saldırıyor";
+        if (d > 2.6) walkTo(worker, floorV(hostile.location), { reach: 2, speed: 0.2 });
+        else meleeAttack(worker, st, hostile);
+        return true;
+      }
       st.status = "Creeper! Kalkan kalktı, geri çekiliyor";
       const away = {
         x: Math.floor(worker.location.x + (worker.location.x - hostile.location.x) * 2),
@@ -58,6 +69,7 @@ export function threatTick(worker, st) {
       return true;
     }
     if (d <= 9 && canShoot(st)) { st.status = "Creeper'a ok atıyor"; bowAttack(worker, st, hostile); return true; }
+    engagement.delete(worker.id);
     return false;
   }
 

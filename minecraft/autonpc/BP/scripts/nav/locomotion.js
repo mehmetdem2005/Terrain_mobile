@@ -9,10 +9,12 @@
 import { findPath } from "./astar.js";
 import { WALK_SPEED, ARRIVE_DIST, STUCK_LIMIT, REPLAN_COOLDOWN } from "../core/config.js";
 import { horizDist, yawToward, keyV } from "../core/math.js";
+import { engineerStep, clearEngineer } from "./engineer.js";
+import { loadState } from "../core/persist.js";
 
 const navs = new Map(); // workerId -> {path, idx, targetKey, stuck, lastPos, cooldown}
 
-export function clearNav(workerId) { navs.delete(workerId); }
+export function clearNav(workerId) { navs.delete(workerId); clearEngineer(workerId); }
 
 function planFor(worker, nav, target, reach) {
   const r = findPath(worker.dimension, worker.location, target, reach);
@@ -38,7 +40,7 @@ export function walkTo(worker, target, opts = {}) {
 
   // varış kontrolü (yol durumundan bağımsız)
   if (horizDist(worker.location, { x: target.x + 0.5, z: target.z + 0.5 }) <= (opts.arrive ?? 1.25)
-      && Math.abs(target.y - worker.location.y) <= 2.2) {
+      && Math.abs(target.y - worker.location.y) <= (opts.vertical ?? 2.2)) {
     clearNav(worker.id);
     return { reached: true };
   }
@@ -54,12 +56,34 @@ export function walkTo(worker, target, opts = {}) {
       // kısmi yol bitti: hedefe devam planı
       nav.path = undefined;
     }
-    if (nav.cooldown > 0 && nav.path === undefined && nav.failedOnce) return { moving: false };
+    // v5.1 MÜHENDİS MODU: A* yol bulamıyorsa pes etme — kaz/köprüle/bas.
+    // (videodaki 'en ufak engelde duruyor' davranışının kök çözümü)
+    if (nav.cooldown > 0 && nav.path === undefined && nav.failedOnce) {
+      if (opts.noEngineer) return { blocked: true, cooling: true };
+      const st = loadState(worker);
+      const r = engineerStep(worker, st, target);
+      if (r.stuck) return { blocked: true };
+      return { moving: true, engineering: true };
+    }
     const plan = planFor(worker, nav, target, reach);
-    if (plan === "at") { clearNav(worker.id); return { reached: true }; }
+    if (plan === "at") {
+      // 'at' kısayolu da dikey toleransa uymalı (S13: yeraltından 'vardım' yok)
+      if (Math.abs(target.y - worker.location.y) <= (opts.vertical ?? 2.2)) {
+        clearNav(worker.id);
+        return { reached: true };
+      }
+      const st = loadState(worker);
+      const r = engineerStep(worker, st, target);
+      if (r.stuck) return { blocked: true };
+      return { moving: true, engineering: true };
+    }
     if (!plan) {
       nav.failedOnce = true;
-      return { blocked: true };
+      if (opts.noEngineer) return { blocked: true };
+      const st = loadState(worker);
+      const r = engineerStep(worker, st, target);
+      if (r.stuck) return { blocked: true };
+      return { moving: true, engineering: true };
     }
     nav.failedOnce = false;
   }

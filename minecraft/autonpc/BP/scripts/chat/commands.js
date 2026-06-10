@@ -10,6 +10,8 @@ import { setTask, stopAll } from "../core/state.js";
 import { canonicalBlockId } from "../jobs/collect_block.js";
 import { getSelection } from "../sys/selection.js";
 import { diagReport } from "../sys/events.js";
+import { system } from "@minecraft/server";
+import { findPath } from "../nav/astar.js";
 
 const TREE_ALIASES = {
   mese: "oak", "meşe": "oak", oak: "oak",
@@ -40,6 +42,24 @@ export function handleChat(player, message) {
   const cmd = parts[1] || "yardım";
 
   if (["yardım", "yardim", "help", "?"].includes(cmd)) { say(player, HELP); return true; }
+  if (["test", "selftest"].includes(cmd)) {
+    const out = [];
+    const w0 = nearestWorker(player, 96);
+    out.push(`tick: ${system.currentTick} (canlıysa artar)`);
+    if (w0) {
+      const s0 = loadState(w0);
+      const inv0 = Object.keys(s0.inventory).length;
+      saveState(w0, s0);
+      out.push(`persist: ${w0.getDynamicProperty("autonpc:state") ? "OK" : "BOŞ"} (env ${inv0} kalem)`);
+      const l = w0.location;
+      const p = findPath(w0.dimension, l, { x: Math.floor(l.x) + 3, y: Math.floor(l.y), z: Math.floor(l.z) }, 1);
+      out.push(`A*: ${p ? (p.complete ? "tam yol " + p.path.length : "kısmi " + p.path.length) : "yol yok (etraf kapalı olabilir)"}`);
+    } else out.push("işçi yok ('npc işçi')");
+    const bad = diagReport().filter((d) => !d.ok).map((d) => d.name);
+    out.push(`olaylar: ${diagReport().length - bad.length} aktif${bad.length ? ", pasif: " + bad.join(",") : ""}`);
+    say(player, "Öz-test:\n" + out.join("\n"));
+    return true;
+  }
   if (["tanı", "tani", "diag"].includes(cmd)) {
     const lines = diagReport().map((d) => `${d.ok ? "§a✓" : "§c✗"} ${d.name}${d.err ? " — " + d.err : ""}§r`);
     say(player, `Olay tanısı:\n${lines.join("\n") || "kayıt yok"}`);

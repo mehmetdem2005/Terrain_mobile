@@ -11,6 +11,9 @@ import { SCAN_BLOCKS_PER_TICK } from "../core/config.js";
 const scans = new Map(); // workerId:tag -> {gen, base, radius, best, bestD, shellR}
 
 export function resetScan(workerId, tag) { scans.delete(workerId + ":" + tag); }
+export function resetAllScans(workerId) {
+  for (const k of [...scans.keys()]) if (k.startsWith(workerId + ":")) scans.delete(k);
+}
 
 /**
  * Her tick çağrılır; bulduysa {found}, bitti+yok ise {exhausted}, sürüyor ise {scanning}.

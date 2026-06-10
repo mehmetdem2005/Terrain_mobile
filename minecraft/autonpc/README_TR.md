@@ -77,3 +77,14 @@ boot-stabil-API, yürüyüş+varış, ağaç kırma+drop toplama, kalıcılık, 
 emri, creeper-kalkan refleksi. İlk koşuda gerçek bir hata yakaladı (boş-yol =
 "varıldı" yerine "blocked" sayılıyordu) — kökten düzeltildi. **13/13 PASS**;
 `tools/build_mcaddon.sh` artık sim geçmeden paket ÜRETMEZ.
+
+## v5.1.0 — MÜHENDİS MODU (videodaki 'engelde takılma'nın kök çözümü)
+A* yol bulamadığında NPC artık PES ETMEZ — locomotion otomatik mühendisliğe
+düşer (nav/engineer.js): öndeki engeli GERÇEK süreyle kazar (tünel), boşluk/
+lav üstüne envanterden blok döşer (köprü/mühür), hedef yukarıda veya çukura
+düştüyse duvara basamak oyarak TIRMANIR, baş üstünü açar, lav komşuluğunu
+önce mühürler (kendini koruma). Güvenlik: kendi ayağının altını asla kazmaz,
+bedrock'ta yön değiştirir, üretken-eylemsizlik 16 yönde sürerse dürüstçe
+'yol yok' der. Eğitim/kanıt senaryoları (sim S12-S15): aşılamaz duvar→tünel,
+6-derin kuyu→yüzeye çıkış, 5-geniş kanyon→köprü (hiç düşmeden), lav nehri→
+mühür+hasarsız geçiş. NİHAİ: 37/37 PASS — build kapısı sim'e bağlı.
