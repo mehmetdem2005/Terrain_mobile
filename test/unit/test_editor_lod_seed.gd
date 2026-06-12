@@ -65,6 +65,36 @@ func _init() -> void:
 	if n_mid != mid_expected:
 		failures.append("seeded mid build: expected %d verts, got %d" % [mid_expected, n_mid])
 
+	# TKT-019 H3: disabling LOD must release a pending seed hold (otherwise
+	# the dirty drain in _process stays gated forever and the terrain never
+	# meshes) and re-dirty decimated chunks so they rebuild at full res.
+	t._lod_needs_seed = true
+	t._lod_held_frames = 7
+	t._chunk_lod[key] = CHUNK_SIZE
+	t.dirty_chunks.clear()
+	t.editor_lod_enabled = false
+	if t._lod_needs_seed:
+		failures.append("lod-disable: seed hold must be released")
+	if t._lod_held_frames != 0:
+		failures.append("lod-disable: held-frame counter must reset")
+	if not t._chunk_lod.is_empty():
+		failures.append("lod-disable: per-chunk strides must clear")
+	if not t.dirty_chunks.has(key):
+		failures.append("lod-disable: decimated chunks must be re-dirtied for full-res rebuild")
+
+	# Re-enabling re-arms the camera-epsilon gate so the next LOD tick
+	# re-evaluates even with a stationary camera.
+	t._last_lod_cam_pos = Vector3(1, 2, 3)
+	t.editor_lod_enabled = true
+	if t._last_lod_cam_pos != Vector3.INF:
+		failures.append("lod-enable: camera epsilon gate must re-arm")
+
+	# The distance-scale setter re-arms it too (slider must not feel dead).
+	t._last_lod_cam_pos = Vector3(1, 2, 3)
+	t.editor_lod_distance_scale = 2.0
+	if t._last_lod_cam_pos != Vector3.INF:
+		failures.append("distance-scale: camera epsilon gate must re-arm")
+
 	_report(t, failures)
 
 

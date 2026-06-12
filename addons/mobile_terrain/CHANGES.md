@@ -1,3 +1,29 @@
+# MobileTerrain3D V22.1 — Saha Kalite Turu (TKT-019)
+
+Tam kaynak audit + doğrulanmış hata düzeltmeleri. Tüm API iddiaları yerel Godot 4.6.2 binary'sine karşı probe edildi.
+
+## Yüksek öncelikli düzeltmeler
+
+- **H1 — Maske fırçası performansı (mobil kritik):** `BrushSystem` her dab'de yeniden kuruluyordu ve `_init` maske LUT'unu her seferinde yeniden bake ediyordu (256² maske = dab başına 65K `get_pixel`, 25 Hz'de ~1.6M çağrı/sn). Node artık tek instance cache'liyor; yalnızca `map_size` / `brush_mask` / `brush_shape` değişince yeniden kurulur. Regresyon testi: `test_brush_cache.gd`.
+- **H2 — EXR import hassasiyeti:** dönüşüm her kaynağı RGBA8'e çevirip hücre başına TEK BYTE okuyordu — float EXR heightmap'ler 256 seviyeye eziliyordu (`import_max_height=50`'de 0.196 birimlik görünür basamaklar). Yeni yol: `FORMAT_RF` + `to_float32_array()` — bulk hız korunur, kaynak hassasiyeti tam aktarılır; bilinear küçültme de artık float'ta çalışır. Regresyon testi: `float_source_preserves_precision`.
+- **H3 — LOD kapatma kilidi:** `_lod_needs_seed` beklemedeyken `editor_lod_enabled` kapatılırsa dirty-chunk drain sonsuza dek kilitleniyordu (terrain boş kalır). Setter eklendi: seed hold'u bırakır, decimle edilmiş chunk'ları full-res'e işaretler; `editor_lod_distance_scale` slider'ı da artık kamera oynatmadan tepki verir.
+- **H4 — Collision bake doğruluğu:** `bake_collision()` LOD ile decimle edilmiş mesh'lerden trimesh üretiyordu (uzak chunk'larda sessizce yanlış collision). Bake öncesi tüm chunk'lar senkron full-res'e döner; freed-chunk ve queued-free child guard'ları eklendi.
+
+## Orta öncelikli düzeltmeler
+
+- **M1 — Obje yerleştirme ölçeklenmesi:** `place_one` her yerleştirmede mevcut TÜM transformları `get/set_instance_transform` ile tek tek taşıyordu (uzun stroke'larda artan takılma). Artık ham `buffer` splice — iki native erişim + memcpy. Headless dummy RenderingServer boş buffer döndürdüğü için (binary'de doğrulandı) guard'lı.
+- **M2 — Özel materyal kaybı:** `terrain_material`'ın STORAGE'ı koşulsuz siliniyordu; kullanıcının dosya-tabanlı (.tres) özel materyali reload'da sessizce düşüyordu. Dosya-tabanlı materyaller artık saklanır (ExtResource satırı — blob riski yok) ve `_setup_default_shader` onların shader'ını EZMEZ. Otomatik (embedded) materyal eski davranışını korur; `scene_no_embed` sözleşmesi değişmedi.
+- **M3** — `force_update_all` yereldeki kopya sabit yerine `TerrainConstants.SYNC_REBUILD_CHUNK_LIMIT` kullanır.
+- **M4** — `get_height` bozuk durumda (mid-resize, başarısız load) OOB hard-crash yerine 0.0 döner.
+- **M5** — `_make_visible(false)` artık `_cached_camera`'yı temizler (deklarasyondaki sözleşme).
+
+## Ertelenen (DEF kayıtları TKT-019'da)
+
+- `rotation_jitter` normal map UV'lerini döndürürken normal vektörünü karşı-döndürmüyor (jitter > 0'da ince ışık kayması) — görsel doğrulama rig'i gerektirir.
+- Editor sahne-açılışında çift `initialize_terrain` (cascade + deferred) — sınırlı maliyet, lifecycle yeniden tasarımı ister.
+
+---
+
 # MobileTerrain3D V22 — AAA Architecture & Deterministic Save
 
 V21'den V22'ye geçişte iki büyük değişiklik:

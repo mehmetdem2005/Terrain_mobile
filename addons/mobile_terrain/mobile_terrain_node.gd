@@ -10,10 +10,12 @@ extends Node3D
 # node reduces far-chunk vertex density by 3D editor camera distance so
 # bird's-eye / whole-world views stay cheap. RUNTIME is unaffected (gated on
 # Engine.is_editor_hint()). Disable to always mesh at full resolution.
-@export var editor_lod_enabled: bool = true
+@export var editor_lod_enabled: bool = true:
+	set = _set_editor_lod_enabled
 # Scales the LOD distance bands. >1 keeps detail farther out (big terrains);
 # <1 is more aggressive (collapses sooner).
-@export var editor_lod_distance_scale: float = 1.0
+@export var editor_lod_distance_scale: float = 1.0:
+	set = _set_editor_lod_distance_scale
 @export var terrain_material: Material:
 	set = _set_material
 # Path to this terrain's companion .res under res://terrain_data/, bound
@@ -201,6 +203,35 @@ var _last_brush_apply_time: float = 0.0
 # case `brush_shape_falloff` falls back to the legacy hard-coded shapes.
 var _brush_mask_image: Image = null
 
+# TKT-019 H1: cached BrushSystem. BrushSystem._init bakes the brush-mask
+# LUT — one get_pixel per mask texel (65K calls for the shipped 256²
+# masks). Constructing it per dab (as _apply_brush_single and
+# _paint_splatmap used to) re-baked that LUT at up to 25 Hz, a frame-
+# eating regression on mobile whenever any mask was active. The cache
+# rebuilds only when an input the system snapshots actually changes;
+# brush_shape has no setter (the plugin writes it directly), so the key
+# comparison runs per dab — three compares, negligible.
+var _brush_system_cache: BrushSystem = null
+var _brush_cache_mask: Texture2D = null
+var _brush_cache_shape: int = -1
+var _brush_cache_map_size: int = -1
+
+
+func _get_brush_system() -> BrushSystem:
+	if (
+		_brush_system_cache == null
+		or _brush_cache_mask != brush_mask
+		or _brush_cache_shape != brush_shape
+		or _brush_cache_map_size != map_size
+	):
+		_brush_system_cache = BrushSystem.new(
+			map_size, brush_mask, _brush_mask_image, brush_shape, noise_gen
+		)
+		_brush_cache_mask = brush_mask
+		_brush_cache_shape = brush_shape
+		_brush_cache_map_size = map_size
+	return _brush_system_cache
+
 var chunks: Dictionary = {}
 var multimesh_instances: Dictionary = {}
 var dirty_chunks: Dictionary = {}
@@ -374,15 +405,26 @@ func _validate_property(property: Dictionary) -> void:
 	if property.name == "slope_rock_factor":
 		property.usage = PROPERTY_USAGE_STORAGE
 	elif property.name == "terrain_material":
-		# The ShaderMaterial is DERIVED state: _ready rebuilds it every load
-		# via _setup_default_shader + update_shader_textures (textures come
-		# from the @export arrays, the splatmap from the .res). Storing it
-		# embeds the live map_size² splatmap ImageTexture into the .tscn — a
-		# ~22 MB blob at 1280² that triggers Godot's "scene large on disk"
-		# warning. Drop STORAGE (keep EDITOR so the inspector still shows it)
-		# so the scene never carries the material or its splatmap. Old scenes
-		# that already embed it shed the blob on the next save.
-		property.usage = property.usage & ~PROPERTY_USAGE_STORAGE
+		# The auto-built ShaderMaterial is DERIVED state: _ready rebuilds it
+		# every load via _setup_default_shader + update_shader_textures
+		# (textures come from the @export arrays, the splatmap from the
+		# .res). Storing it embeds the live map_size² splatmap ImageTexture
+		# into the .tscn — a ~22 MB blob at 1280² that triggers Godot's
+		# "scene large on disk" warning. Drop STORAGE (keep EDITOR so the
+		# inspector still shows it) so the scene never carries the material
+		# or its splatmap. Old scenes that already embed it shed the blob on
+		# the next save.
+		#
+		# TKT-019 M2: file-backed materials are the exception. A user-
+		# authored .tres/.material serialises into the .tscn as a one-line
+		# ExtResource path — no blob — and stripping STORAGE silently
+		# unassigned it on reload (the auto default took over with no
+		# warning). Keep STORAGE when the material lives in its own file;
+		# embedded materials (empty path, or a "::" scene-internal
+		# subresource id) stay stripped.
+		var rp: String = terrain_material.resource_path if terrain_material != null else ""
+		if rp == "" or rp.contains("::"):
+			property.usage = property.usage & ~PROPERTY_USAGE_STORAGE
 
 
 func _ready() -> void:
@@ -548,6 +590,16 @@ func _setup_default_shader():
 	if terrain_material == null:
 		terrain_material = ShaderMaterial.new()
 	var smat = terrain_material as ShaderMaterial
+	# TKT-019 M2: a file-backed ShaderMaterial is user-authored — never
+	# overwrite its shader with the bundled one (the stale-shader refresh
+	# below would stomp the user's custom shader AND dirty their .tres on
+	# disk). Bind the terrain uniforms onto it and stop. The auto-built
+	# material (no path) and old scene-embedded ones ("::" ids) still get
+	# the refresh.
+	var mat_path: String = smat.resource_path
+	if mat_path != "" and not mat_path.contains("::"):
+		update_shader_textures()
+		return
 	# V21: detect a stale shader (saved with older addon version) by
 	# checking for the existence of one of the new uniforms. If the
 	# parameter list doesn't contain `triplanar_blend`, the shader is
@@ -919,6 +971,18 @@ func _set_material(val: Material):
 
 
 func bake_collision():
+	# TKT-019 H4: editor LOD decimates far chunk meshes (down to a single
+	# quad), and create_trimesh_collision bakes from the CURRENT mesh — so
+	# baking while zoomed out used to produce silently wrong (coarse)
+	# collision. Reset every chunk to full resolution synchronously first;
+	# the user explicitly asked for a bake, so correctness beats latency
+	# here. The LOD pass re-decimates the VISUAL meshes afterwards; the
+	# baked StaticBody3D children keep the full-res shapes.
+	if not _chunk_lod.is_empty():
+		_chunk_lod.clear()
+	for chunk_pos in chunks.keys():
+		update_chunk_mesh(chunk_pos.x, chunk_pos.y)
+	dirty_chunks.clear()
 	# V21: chunks aren't owned by the edited scene normally (they're
 	# regenerated from height_data on load — saving them doubles the
 	# .tscn size). But baked collision lives as StaticBody3D children
@@ -934,12 +998,21 @@ func bake_collision():
 	if get_tree() and get_tree().edited_scene_root:
 		scene_root = get_tree().edited_scene_root
 	for chunk in chunks.values():
+		# TKT-019 H4: chunks can be freed by a concurrent rebuild between
+		# dict reads; touching a freed node crashes the editor.
+		if not is_instance_valid(chunk):
+			continue
 		for child in chunk.get_children():
 			child.queue_free()
 		chunk.create_trimesh_collision()
 		if scene_root != null:
 			chunk.owner = scene_root  # V21: promote chunk so collision persists
 		for child in chunk.get_children():
+			# TKT-019 H4: queue_free above is deferred — the OLD StaticBody3D
+			# from a previous bake is still a child here. Owner-promoting a
+			# node that's about to be freed is wasted work at best.
+			if child.is_queued_for_deletion():
+				continue
 			if child is StaticBody3D:
 				if scene_root != null:
 					child.owner = scene_root
@@ -1180,6 +1253,13 @@ static func _is_safe_external_path(p: String) -> bool:
 
 
 func get_height(x: int, z: int) -> float:
+	# TKT-019 M4: guard malformed state (mid-resize window, failed external
+	# load). The coordinate clamps below assume height_data matches
+	# map_size²; when it doesn't, the read would be a hard script error —
+	# raised from the cursor-drape path at 25 Hz, that crashed the editor.
+	# Height 0 keeps callers alive until the state converges.
+	if map_size <= 0 or height_data.size() != map_size * map_size:
+		return 0.0
 	x = clampi(x, 0, map_size - 1)
 	z = clampi(z, 0, map_size - 1)
 	return height_data[z * map_size + x]
@@ -1198,29 +1278,38 @@ func _process(delta: float):
 	# whole-map full-res spike that OOM-crashes the editor on large maps.
 	# Runtime keeps _lod_needs_seed false (set only under is_editor_hint), so
 	# this whole block is skipped and the drain below runs exactly as before.
-	if editor_lod_enabled and Engine.is_editor_hint():
-		_lod_accum += delta
-		if _lod_needs_seed:
-			# First seed after a (re)build: force past the 0.15s throttle AND
-			# the camera-movement early-out. Releases the drain hold only once
-			# the editor camera is available and _chunk_lod is populated.
-			_lod_held_frames += 1
-			if _update_editor_lod(true):
-				_lod_needs_seed = false
+	if Engine.is_editor_hint():
+		if editor_lod_enabled:
+			_lod_accum += delta
+			if _lod_needs_seed:
+				# First seed after a (re)build: force past the 0.15s throttle AND
+				# the camera-movement early-out. Releases the drain hold only once
+				# the editor camera is available and _chunk_lod is populated.
+				_lod_held_frames += 1
+				if _update_editor_lod(true):
+					_lod_needs_seed = false
+					_lod_accum = 0.0
+					_lod_held_frames = 0
+				elif _lod_held_frames > 30:
+					# Editor camera never appeared; seed every chunk to the
+					# coarsest stride so the terrain still shows (one quad per
+					# chunk) instead of staying blank — never a full-res spike.
+					# The normal throttled pass refines once a camera exists.
+					for key in chunks.keys():
+						_chunk_lod[key] = chunk_size
+					_lod_needs_seed = false
+					_lod_held_frames = 0
+			elif _lod_accum >= TerrainConstants.EDITOR_LOD_UPDATE_INTERVAL:
 				_lod_accum = 0.0
-				_lod_held_frames = 0
-			elif _lod_held_frames > 30:
-				# Editor camera never appeared; seed every chunk to the
-				# coarsest stride so the terrain still shows (one quad per
-				# chunk) instead of staying blank — never a full-res spike.
-				# The normal throttled pass refines once a camera exists.
-				for key in chunks.keys():
-					_chunk_lod[key] = chunk_size
-				_lod_needs_seed = false
-				_lod_held_frames = 0
-		elif _lod_accum >= TerrainConstants.EDITOR_LOD_UPDATE_INTERVAL:
-			_lod_accum = 0.0
-			_update_editor_lod()
+				_update_editor_lod()
+		elif _lod_needs_seed:
+			# TKT-019 H3 belt-and-braces: LOD was switched off while a seed
+			# hold was pending (the setter already releases it; this catches
+			# direct/scripted writes that bypass setters). Without the
+			# release, the drain below stays gated forever and the terrain
+			# never meshes.
+			_lod_needs_seed = false
+			_lod_held_frames = 0
 
 	# Drain the per-chunk mesh rebuild queue. HELD in the editor only while LOD
 	# still needs its first seed (above), so no chunk is ever meshed at the
@@ -1447,6 +1536,36 @@ func update_chunk_mesh(cx: int, cz: int):
 	chunk.position = Vector3(start_x, 0, start_z)
 
 
+# TKT-019 H3: turning LOD off must (a) release a pending seed hold —
+# otherwise the dirty drain in _process stays gated on _lod_needs_seed
+# forever and a mid-build terrain never meshes (blank editor viewport
+# with no error) — and (b) restore any decimated chunks to full
+# resolution, since the LOD pass that would refine them no longer runs.
+# Turning it back on re-arms the camera-epsilon gate so the next tick
+# re-evaluates even with a stationary camera.
+func _set_editor_lod_enabled(val: bool) -> void:
+	if editor_lod_enabled == val:
+		return
+	editor_lod_enabled = val
+	if not val:
+		_lod_needs_seed = false
+		_lod_held_frames = 0
+		if not _chunk_lod.is_empty():
+			_chunk_lod.clear()
+			for key in chunks.keys():
+				dirty_chunks[key] = true
+	else:
+		_last_lod_cam_pos = Vector3.INF
+
+
+# TKT-019 H3: without this, dragging the scale slider felt dead — the
+# camera-movement epsilon gate in _update_editor_lod blocked any
+# re-evaluation until the user happened to orbit the camera.
+func _set_editor_lod_distance_scale(val: float) -> void:
+	editor_lod_distance_scale = val
+	_last_lod_cam_pos = Vector3.INF
+
+
 # Editor-only: re-evaluate every chunk's LOD against the 3D editor camera
 # distance and mark any whose stride changed dirty. The budgeted drain in
 # _process rebuilds them over subsequent frames, so a sudden zoom-to-bird's-eye
@@ -1546,8 +1665,9 @@ func force_update_all() -> void:
 	# queue approach the editor stays interactive during the rebuild;
 	# the visual "wipe" finishes within a second for sub-1000-chunk
 	# maps and a few seconds for the biggest 1500+ ones.
-	const SYNC_REBUILD_CHUNK_LIMIT := 256
-	if chunks.size() <= SYNC_REBUILD_CHUNK_LIMIT:
+	# TKT-019 M3: threshold centralised in TerrainConstants (a local const
+	# duplicated it and the two could drift).
+	if chunks.size() <= TerrainConstants.SYNC_REBUILD_CHUNK_LIMIT:
 		for chunk_pos in chunks.keys():
 			update_chunk_mesh(chunk_pos.x, chunk_pos.y)
 		# We just rebuilt everything synchronously; any pending incremental
@@ -1948,11 +2068,11 @@ func _apply_brush_single(hit_point: Vector3):
 	if current_tool == 7:  # Paint
 		_paint_splatmap(local_pos.x, local_pos.z, brush_radius, brush_strength * 0.1)
 		return
-	# V22 Phase 4: sculpt ops delegated to SculptOps. The brush state +
-	# noise generator are wrapped in a per-dab BrushSystem instance, the
-	# chunk-dirty callback is bound here so SculptOps doesn't need to
-	# know about the node's internals.
-	var brush := BrushSystem.new(map_size, brush_mask, _brush_mask_image, brush_shape, noise_gen)
+	# V22 Phase 4: sculpt ops delegated to SculptOps. The chunk-dirty
+	# callback is bound here so SculptOps doesn't need to know about the
+	# node's internals. TKT-019 H1: the BrushSystem comes from the node
+	# cache — per-dab construction re-baked the mask LUT every dab.
+	var brush := _get_brush_system()
 	var mark_dirty := func(x: int, z: int) -> void: _mark_chunk_dirty(x, z)
 	match current_tool:
 		0, 1:
@@ -2078,8 +2198,9 @@ func _paint_splatmap(cx: float, cz: float, radius: float, strength: float):
 	# (pure, unit-testable). This function keeps responsibility for state —
 	# which Image is active, when to flush bytes to GPU, when to rebind
 	# the shader uniform — while the per-pixel competitive blend math
-	# lives in SplatmapSystem.paint.
-	var brush := BrushSystem.new(map_size, brush_mask, _brush_mask_image, brush_shape, noise_gen)
+	# lives in SplatmapSystem.paint. TKT-019 H1: cached BrushSystem (see
+	# _get_brush_system) — per-dab construction re-baked the mask LUT.
+	var brush := _get_brush_system()
 	SplatmapSystem.paint(img, map_size, cx, cz, radius, strength, current_paint_slot, brush)
 
 	# V22: null guard. splatmap_texture_local can be nulled between
@@ -2101,6 +2222,12 @@ func _paint_splatmap(cx: float, cz: float, radius: float, strength: float):
 
 func _set_brush_mask(val: Texture2D) -> void:
 	brush_mask = val
+	# TKT-019 H1: the cached BrushSystem snapshots _brush_mask_image at
+	# construction; drop it so the next dab re-bakes against the new mask.
+	# (The key compare in _get_brush_system catches a CHANGED texture, but
+	# re-assigning the SAME texture re-extracts the image below — nulling
+	# here keeps cache and image in lockstep either way.)
+	_brush_system_cache = null
 	if val == null:
 		_brush_mask_image = null
 		return

@@ -139,18 +139,27 @@ static func place_one(
 	var idx: int = mm.instance_count
 	# CRITICAL: growing instance_count reallocates the transform buffer and
 	# CLEARS every existing instance (RenderingServer behaviour — any
-	# instance_count change wipes the buffer). So snapshot the current
-	# transforms, grow, then restore them before writing the new one. Without
-	# this, every placement reset all previously placed objects to the origin,
-	# so only the newest object stayed where it was tapped and the rest
-	# "disappeared" (collapsed onto world origin).
-	var kept: Array[Transform3D] = []
-	kept.resize(idx)
-	for i in range(idx):
-		kept[i] = mm.get_instance_transform(i)
+	# instance_count change wipes the buffer), so existing transforms must
+	# be restored after the grow. Without that, every placement reset all
+	# previously placed objects to the origin.
+	#
+	# TKT-019 M1: restore via a raw `buffer` splice — snapshot the packed
+	# float buffer, grow, zero-extend the snapshot to the new size, assign
+	# it back. Two native property accesses + a memcpy-backed resize,
+	# instead of the old per-instance get/set_instance_transform loop that
+	# made each placement cost O(existing instances) native calls (long
+	# strokes stuttered as the count climbed). The new slot is zeroed by
+	# the resize and immediately overwritten below.
+	#
+	# Headless builds: the dummy RenderingServer reports an EMPTY buffer
+	# (verified on 4.6.2), so the splice is skipped there — the same
+	# degenerate no-op the per-instance loop had under --headless.
+	var kept: PackedFloat32Array = mm.buffer
 	mm.instance_count = idx + 1
-	for i in range(idx):
-		mm.set_instance_transform(i, kept[i])
+	var grown_size: int = mm.buffer.size()
+	if idx > 0 and grown_size > 0 and kept.size() > 0:
+		kept.resize(grown_size)
+		mm.buffer = kept
 	mm.set_instance_transform(idx, local_tf)
 	return idx
 

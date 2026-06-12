@@ -17,7 +17,9 @@ extends RefCounted
 
 
 # Convert a Texture2D into a PackedFloat32Array of heights sized to
-# (target_size × target_size). Maps the red channel through max_height/255.
+# (target_size × target_size). Maps the red channel (normalised 0..1)
+# through max_height — an 8-bit source's red byte b becomes b/255 *
+# max_height, identical to the historical contract.
 #
 # Returns an empty array on bad input (null texture, null image data).
 # Caller decides what to do with empty (e.g. log MT-* diagnostic).
@@ -37,21 +39,24 @@ static func convert_texture_to_heights(
 	var src_img := src_texture.get_image()
 	if src_img == null:
 		return PackedFloat32Array()
-	# TKT-004 H6: only duplicate when we're actually going to MUTATE the
-	# image (decompress / resize / convert). The audit flagged ~3 full
-	# buffers + GC churn on a 1254² import; the dominant one is this
-	# duplicate (E1's source-protection copy, source-sized before resize).
-	# get_data() below is read-only, so when the source is already the
-	# target size, uncompressed, and RGBA8 we can read it directly and skip
-	# the copy entirely — eliminating the largest allocation in the common
-	# "import at native resolution" path. (The audit's 256²-streaming idea
-	# isn't expressible with Godot's Image API: resize() and get_data()
-	# both operate on the whole buffer, so there's no per-tile scratch.)
+	# TKT-019 H2: pivot the bulk path from FORMAT_RGBA8 to FORMAT_RF.
+	# The V21 bulk-byte optimisation converted every source to RGBA8 and
+	# read one byte per cell — which silently quantised EXR / 16-bit float
+	# heightmaps to 256 levels (visible terracing on smooth slopes; at
+	# import_max_height=50 each step is 0.196 units). FORMAT_RF keeps one
+	# float32 per cell, so get_data().to_float32_array() is the same bulk
+	# read with FULL source precision; 8-bit sources convert to b/255.0
+	# floats, preserving the historical scaling exactly. Converting BEFORE
+	# the resize also makes the bilinear resample run in float, so
+	# downscaled float imports don't quantise mid-pipeline either.
+	#
+	# TKT-004 H6 (duplicate only when mutating) is preserved: the zero-copy
+	# fast path now applies to FORMAT_RF sources at native resolution.
 	var needs_mutation: bool = (
 		src_img.is_compressed()
 		or src_img.get_width() != target_size
 		or src_img.get_height() != target_size
-		or src_img.get_format() != Image.FORMAT_RGBA8
+		or src_img.get_format() != Image.FORMAT_RF
 	)
 	var img: Image = src_img
 	if needs_mutation:
@@ -61,23 +66,19 @@ static func convert_texture_to_heights(
 		img = src_img.duplicate()
 		if img.is_compressed():
 			img.decompress()
+		if img.get_format() != Image.FORMAT_RF:
+			img.convert(Image.FORMAT_RF)
 		if img.get_width() != target_size or img.get_height() != target_size:
 			img.resize(target_size, target_size, Image.INTERPOLATE_BILINEAR)
-		# V21 PERFORMANCE FIX: bulk byte read instead of per-pixel get_pixel.
-		# Converting to RGBA8 lets us index the raw byte array directly:
-		# pixel i's red component lives at byte (i * 4).
-		if img.get_format() != Image.FORMAT_RGBA8:
-			img.convert(Image.FORMAT_RGBA8)
-	var raw: PackedByteArray = img.get_data()
+	var floats: PackedFloat32Array = img.get_data().to_float32_array()
 	var total: int = target_size * target_size
-	# Defensive: the buffer must hold at least 4 bytes per cell. If
-	# format conversion failed silently (rare but possible on damaged
-	# imports), refuse to scan past the end.
-	if raw.size() < total * 4:
+	# Defensive: the buffer must hold one float per cell. If format
+	# conversion failed silently (rare but possible on damaged imports),
+	# refuse to scan past the end.
+	if floats.size() < total:
 		return PackedFloat32Array()
-	var inv255: float = max_height / 255.0
 	var heights := PackedFloat32Array()
 	heights.resize(total)
 	for i in range(total):
-		heights[i] = float(raw[i * 4]) * inv255
+		heights[i] = floats[i] * max_height
 	return heights

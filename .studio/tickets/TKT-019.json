@@ -1,0 +1,53 @@
+{
+  "id": "TKT-019",
+  "title": "Field-quality audit & fix pass (V22.1) — mask-brush perf, EXR precision, LOD deadlock, collision bake",
+  "kind": "audit_and_fix",
+  "size": "L",
+  "target_godot": "4.6.2",
+  "target_platform": "mobile",
+  "priority": "high",
+  "mode": "standard",
+  "state": "CLOSED",
+  "created_at": "2026-06-12",
+  "scope": {
+    "plugin_dir": "addons/mobile_terrain/",
+    "request": "User: 'Bizim terrain eklentimizin hatalarını tara sahada kaliteli yap geliştir' — full-source audit, fix verified defects, raise field quality."
+  },
+  "findings": {
+    "H1": "PERF/MOBILE — BrushSystem constructed per dab (node.gd:1955, 2082); _init bakes the brush-mask LUT with one get_pixel per mask texel. 256² mask × 25 Hz = ~1.6M get_pixel/s while sculpting with any mask active. Introduced by TKT-004 H5 (LUT assumed a long-lived instance). Fix: node-level cached BrushSystem keyed on (map_size, brush_mask, brush_shape); invalidated in _set_brush_mask.",
+    "H2": "DATA QUALITY — HeightmapIO.convert_texture_to_heights converts every source to FORMAT_RGBA8 and reads one byte per cell: EXR/16-bit float heightmaps are quantised to 256 levels (visible terracing at import_max_height=50 → 0.196-unit steps). Introduced by the V21 bulk-byte optimisation (pre-V21 get_pixel().r kept float precision). Fix: convert to FORMAT_RF + PackedByteArray.to_float32_array() — verified bit-exact on the 4.6.2 binary, keeps the bulk path.",
+    "H3": "EDITOR HANG — disabling editor_lod_enabled while _lod_needs_seed is true leaves the dirty-chunk drain gated forever (terrain stays unmeshed); plain @export bool had no setter, so toggling LOD off also left far chunks decimated with no rebuild. Fix: setter releases the seed hold + re-dirties chunks at full res; _process gets an elif release branch (belt-and-braces); editor_lod_distance_scale setter resets the camera-epsilon gate so the slider responds without camera movement.",
+    "H4": "CORRECTNESS — bake_collision() builds trimesh shapes from current chunk meshes; with editor LOD active, far chunks are decimated (down to one quad) → baked collision silently wrong. Also: no is_instance_valid guard on chunks, and the owner loop touches children already queued for deletion. Fix: clear _chunk_lod + synchronous full-res rebuild before baking; validity guards; skip queued-free children.",
+    "M1": "PERF — TerrainObjectPlacement.place_one restores every existing transform via get/set_instance_transform on each placement (O(n) native calls per dab; instance_count growth clears the buffer). Fix: raw buffer splice (resize + one setter call). Headless dummy RenderingServer returns an empty buffer (verified) → guarded fallback keeps tests green.",
+    "M2": "DATA LOSS — _validate_property strips STORAGE from terrain_material unconditionally, so a user-authored file-backed material (.tres) silently unassigns on reload and the auto default takes over; _setup_default_shader would also overwrite a custom material's shader (dirtying the user's .tres). Fix: keep STORAGE when resource_path is a real file (non-empty, no '::'); skip the shader-refresh for file-backed materials. scene_no_embed contract unaffected (auto material has no path).",
+    "M3": "CONSISTENCY — force_update_all kept a local SYNC_REBUILD_CHUNK_LIMIT const duplicating TerrainConstants.",
+    "M4": "ROBUSTNESS — get_height() indexes height_data without a size check; malformed state (mid-resize, failed load) turns a cursor-drape call into a hard script error. Guard returns 0.0.",
+    "M5": "DOC CONTRACT — _cached_camera declaration says 'cleared on _make_visible(false)' but never was. Cleared now."
+  },
+  "api_verification": {
+    "verified_against": "godot 4.6.2.stable.official.71f334935 (local binary + extracted XML)",
+    "probes": [
+      "Image.FORMAT_RF convert preserves float precision (0.123456 round-trip exact)",
+      "RGBA8→RF convert keeps red channel (200/255 exact)",
+      "PackedByteArray.to_float32_array() exists and decodes RF data",
+      "MultiMesh.buffer returns EMPTY in headless dummy RS (guard required)",
+      "Image.resize bilinear works on FORMAT_RF",
+      "MeshInstance3D.create_trimesh_collision exists"
+    ]
+  },
+  "tests": {
+    "baseline": "test/run_all.sh green before edits (15 suites)",
+    "added": [
+      "test_heightmap_io: float_source_preserves_precision (locks H2)",
+      "test_brush_cache.gd: cache identity + invalidation on shape/mask/map_size (locks H1)",
+      "test_editor_lod_seed: lod-disable releases seed hold + re-dirties chunks (locks H3)"
+    ]
+  },
+  "deferred": [
+    "DEF-005: shader rotation_jitter rotates normal-map UVs without counter-rotating sampled normal vectors — subtle lighting skew when jitter > 0. Needs visual verification rig before touching the shader; resurface when shader work is next scheduled.",
+    "DEF-006: double initialize_terrain on editor scene-open (cascade + deferred) — known tech debt, bounded cost, needs lifecycle redesign to remove safely."
+  ],
+  "closed_at": "2026-06-12",
+  "quality_gate": "PASS — test/run_all.sh 16/16 suites green (3 new regression locks: brush cache, float precision, lod-disable release); gdlint clean on changed system files; parse check green",
+  "honesty_audit": "PASS with 3 disclosed gaps: H4 (bake_collision) and M1's real-RS buffer path and M2's file-backed reload are editor-runtime behaviours not coverable headless — logic reviewed, manual editor verification recommended"
+}

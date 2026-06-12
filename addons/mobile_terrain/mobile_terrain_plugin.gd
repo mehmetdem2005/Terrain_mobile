@@ -2113,6 +2113,11 @@ func _make_visible(visible: bool) -> void:
 		splatmap_backup = PackedByteArray()
 		heightmap_backup = PackedFloat32Array()
 		placement_records.clear()
+		# TKT-019 M5: the declaration comment always promised this clear
+		# ("cleared on _make_visible(false)") but it was never done — the
+		# is_instance_valid guards downstream masked it. Honour the contract
+		# so no stale viewport camera survives a deselect.
+		_cached_camera = null
 
 
 func _on_tool_selected(idx: int):

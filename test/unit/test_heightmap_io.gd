@@ -22,6 +22,7 @@ func _init() -> void:
 	_run("resizes_to_target_size", _test_resize, failures)
 	_run("output_size_is_target_squared", _test_output_size, failures)
 	_run("h6_source_not_mutated_on_fast_path", _test_h6_source_safety, failures)
+	_run("float_source_preserves_precision", _test_float_precision, failures)
 
 	if failures.is_empty():
 		print("HEIGHTMAP_IO_TEST_OK")
@@ -125,6 +126,26 @@ func _test_output_size() -> String:
 		if result.size() != expected:
 			return "target_size=%d: expected %d, got %d" % [target, expected, result.size()]
 	return ""
+
+func _test_float_precision() -> String:
+	# TKT-019 H2: an EXR-style float source must NOT be quantised to 8 bits.
+	# 0.34567 sits between the 8-bit steps 88/255 (~0.34510) and 89/255
+	# (~0.34902); the old RGBA8 bulk path snapped it to one of those
+	# (error ≥ 0.0005), while the FORMAT_RF path must round-trip the float
+	# exactly (float32 epsilon).
+	var img := Image.create_empty(4, 4, false, Image.FORMAT_RF)
+	img.fill(Color(0.34567, 0.0, 0.0, 1.0))
+	var tex := ImageTexture.create_from_image(img)
+	var result: PackedFloat32Array = HeightmapIOScript.convert_texture_to_heights(tex, 4, 1.0)
+	if result.size() != 16:
+		return "expected 16 heights, got %d" % result.size()
+	if absf(result[0] - 0.34567) > 0.0001:
+		return (
+			"float precision lost: expected 0.34567, got %f (8-bit quantisation regression)"
+			% result[0]
+		)
+	return ""
+
 
 func _test_h6_source_safety() -> String:
 	# TKT-004 H6: on the no-mutation fast path (source already target-size,

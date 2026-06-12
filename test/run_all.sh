@@ -91,9 +91,13 @@ echo "==> 14/15 undo recorder unit test (TKT-009 Phase B.2 extraction)"
 godot --headless --script unit_tests/test_undo_recorder.gd 2>&1 | tee /tmp/undo_recorder.log
 grep -q "^UNDO_RECORDER_TEST_OK" /tmp/undo_recorder.log
 
-echo "==> 15/15 editor LOD seed unit test (load-spike fix: update_chunk_mesh honours seeded _chunk_lod)"
+echo "==> 15/16 editor LOD seed unit test (load-spike fix + TKT-019 H3 lod-disable release)"
 godot --headless --script unit_tests/test_editor_lod_seed.gd 2>&1 | tee /tmp/editor_lod_seed.log
 grep -q "^EDITOR_LOD_SEED_OK" /tmp/editor_lod_seed.log
+
+echo "==> 16/16 brush system cache (TKT-019 H1: no per-dab mask LUT re-bake)"
+godot --headless --script unit_tests/test_brush_cache.gd 2>&1 | tee /tmp/brush_cache.log
+grep -q "^BRUSH_CACHE_TEST_OK" /tmp/brush_cache.log
 
 echo
 echo "ALL TESTS PASSED"
