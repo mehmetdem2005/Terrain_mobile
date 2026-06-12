@@ -37,3 +37,17 @@ _(none yet — this project's first ticket will populate)_
   `size() > 0` or headless CI breaks.
 - **`create_trimesh_collision` bakes the CURRENT mesh** — under editor LOD
   decimation that means wrong collision. Force full-res rebuild before baking.
+
+## TKT-020 lessons (2026-06-12)
+
+- **Editor-only features need a runtime-inert proof, not a promise.** Gate on
+  `Engine.is_editor_hint()` at the EFFECTIVE check (one function), add a test
+  hook for headless coverage, and ship a unit test that loads the saved-scene
+  worst case with the hint absent.
+- **"Hide" is not enough for editor perf — drop the mesh and skip the build.**
+  `visible = false` still pays meshing; the win comes from null'ing the
+  ArrayMesh and early-outing the rebuild path, with a stale-set so re-show
+  rebuilds from data.
+- **A mode default should be the behaviour users call good.** When users name
+  the old behaviour "berbat", keep it reachable (it has uses) but never the
+  default.

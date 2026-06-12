@@ -18,6 +18,9 @@ var tool_opt: OptionButton
 var shape_opt: OptionButton
 var texture_opt: OptionButton
 var object_opt: OptionButton
+# TKT-020 F2: paint coverage mode dropdown (🪣 Dolgu / 🌫️ Yumuşak), shown
+# only while the Boya tool is active. Writes selected_node.paint_mode.
+var paint_mode_opt: OptionButton
 var radius_slider: HSlider
 var radius_spinbox: SpinBox
 var strength_slider: HSlider
@@ -33,6 +36,9 @@ var _syncing_brush_controls: bool = false
 var asset_manager_panel: PanelContainer
 var tex_list_vbox: VBoxContainer
 var obj_list_vbox: VBoxContainer
+# TKT-020 F1: the "Chunk'lar" tab (editor/ui/chunk_visibility_tab.gd) living
+# next to "Varlıklar" inside the panel's TabContainer.
+var chunk_vis_tab: TerrainChunkVisibilityTab
 # TKT-015: "Gelişmiş Ayarlar" panel section. Controls are built once in
 # _build_settings_section and their values synced from the selected node in
 # _refresh_settings_controls. Keyed by node property name so changing a control
@@ -412,6 +418,22 @@ func _build_main_ui():
 	)
 	texture_opt.hide()
 	toolbar.add_child(texture_opt)
+
+	# TKT-020 F2: paint coverage mode. Dolgu = one pass paints the footprint
+	# core to FULL coverage (the mask/shape falloff still feathers the edge);
+	# Yumuşak = the historical gradual build-up, kept for blending
+	# transitions between textures. ID-based like every other dropdown.
+	paint_mode_opt = OptionButton.new()
+	paint_mode_opt.name = "PaintModeOpt"
+	paint_mode_opt.add_item("🪣 Dolgu", TerrainNode.PAINT_MODE_FILL)
+	paint_mode_opt.add_item("🌫️ Yumuşak", TerrainNode.PAINT_MODE_SOFT)
+	paint_mode_opt.tooltip_text = (
+		"Dolgu: tek geçişte tam boya (güç kullanılmaz; kenarı maske/şekil yumuşatır)."
+		+ "\nYumuşak: bastıkça birikir — doku geçişleri için."
+	)
+	paint_mode_opt.item_selected.connect(_on_paint_mode_selected)
+	paint_mode_opt.hide()
+	toolbar.add_child(paint_mode_opt)
 
 	object_opt = OptionButton.new()
 	object_opt.name = "ObjectOpt"
@@ -900,8 +922,15 @@ func _build_asset_manager_ui():
 	margin.add_theme_constant_override("margin_bottom", 10)
 	asset_manager_panel.add_child(margin)
 
+	# TKT-020 F1: the panel is tabbed now — "Varlıklar" keeps the existing
+	# settings + texture/object slots; "Chunk'lar" hosts the editor chunk
+	# visibility board. Tab titles come from the child node names.
+	var tabs := TabContainer.new()
+	margin.add_child(tabs)
+
 	var main_vbox = VBoxContainer.new()
-	margin.add_child(main_vbox)
+	main_vbox.name = "Varlıklar"
+	tabs.add_child(main_vbox)
 
 	var title = Label.new()
 	title.text = "Terrain Varlık Yöneticisi"
@@ -965,6 +994,20 @@ func _build_asset_manager_ui():
 
 	obj_list_vbox = VBoxContainer.new()
 	obj_vbox.add_child(obj_list_vbox)
+
+	# TKT-020 F1: second tab — chunk visibility board. Refreshed on panel
+	# open (_refresh_manager_ui) and whenever the user switches onto the tab
+	# (map_size / chunk_size may have changed while the other tab was up).
+	chunk_vis_tab = TerrainChunkVisibilityTab.new()
+	tabs.add_child(chunk_vis_tab)
+	tabs.tab_changed.connect(
+		func(_idx: int) -> void:
+			if (
+				is_instance_valid(chunk_vis_tab)
+				and tabs.get_current_tab_control() == chunk_vis_tab
+			):
+				chunk_vis_tab.refresh(selected_node)
+	)
 
 	# V23 (TKT-002 C7): null-guarded — leave the asset panel unparented if
 	# the main screen isn't available yet. _toggle_asset_manager will
@@ -1132,6 +1175,9 @@ func _refresh_manager_ui():
 	if not selected_node:
 		return
 	_refresh_settings_controls()
+	# TKT-020 F1: keep the chunk board in sync with the selected terrain.
+	if is_instance_valid(chunk_vis_tab):
+		chunk_vis_tab.refresh(selected_node)
 	for child in tex_list_vbox.get_children():
 		child.queue_free()
 	for child in obj_list_vbox.get_children():
@@ -2057,6 +2103,11 @@ func _edit(object: Object) -> void:
 		# the moment any tool is reordered or hidden. _select_tool_by_id
 		# decouples the visual position from the semantic identifier.
 		_select_tool_by_id(selected_node.current_tool)
+		# TKT-020 F2: mirror the node's paint mode into the dropdown without
+		# firing the change handler (the node already holds the value).
+		if is_instance_valid(paint_mode_opt):
+			var pm_idx: int = _index_for_id(paint_mode_opt, selected_node.paint_mode)
+			paint_mode_opt.select(pm_idx if pm_idx >= 0 else 0)
 		# shape_opt added items in IDs 0..4 in order too, and is a
 		# simpler 5-item list — leaving it as a direct .select() because
 		# the chance of reordering is near-zero and brush_shape values
@@ -2205,10 +2256,40 @@ func _update_ui_visibility():
 		return
 	texture_opt.hide()
 	object_opt.hide()
+	if is_instance_valid(paint_mode_opt):
+		paint_mode_opt.hide()
 	if selected_node.current_tool == 7:  # Paint V19
 		texture_opt.show()
+		if is_instance_valid(paint_mode_opt):
+			paint_mode_opt.show()
 	elif selected_node.current_tool == 8:  # Object V19
 		object_opt.show()
+	# TKT-020 F2: in Dolgu mode the blend is falloff-only, so the strength
+	# slider does nothing for paint — disable it (with a tooltip saying why)
+	# instead of letting the user drag a dead control. Every other tool
+	# (and Yumuşak paint) re-enables it.
+	var fill_paint: bool = (
+		selected_node.current_tool == 7
+		and selected_node.paint_mode == TerrainNode.PAINT_MODE_FILL
+	)
+	if is_instance_valid(strength_slider):
+		strength_slider.editable = not fill_paint
+		strength_slider.tooltip_text = (
+			"Dolgu modunda güç kullanılmaz — kenar geçişini maske/şekil belirler."
+			if fill_paint
+			else ""
+		)
+	if is_instance_valid(strength_spinbox):
+		strength_spinbox.editable = not fill_paint
+
+
+# TKT-020 F2: paint mode change. ID-resolved like _on_tool_selected; also
+# re-evaluates the strength slider's enabled state.
+func _on_paint_mode_selected(idx: int) -> void:
+	if not selected_node:
+		return
+	selected_node.paint_mode = paint_mode_opt.get_item_id(idx)
+	_update_ui_visibility()
 
 
 func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
@@ -2267,7 +2348,6 @@ func _conform_brush_to_surface(hit_point: Vector3):
 	# clearly. Higher than ~32 starts to hitch on low-end Adreno GPUs.
 	const GRID := 20
 	var lift: float = 0.05 + radius * 0.005
-	var origin: Vector3 = selected_node.global_position
 
 	# Pre-fetch the mask image once. Sampling brush_mask through GPU is
 	# expensive (and would require shader code); sampling the cached CPU
@@ -2315,10 +2395,15 @@ func _conform_brush_to_surface(hit_point: Vector3):
 			var dz: float = (v - 0.5) * 2.0 * radius
 			var wx: float = hit_point.x + dx
 			var wz: float = hit_point.z + dz
-			# Sample terrain height at this world XZ for the drape.
-			var sx: int = int(floor(wx - origin.x))
-			var sz: int = int(floor(wz - origin.z))
-			var wy: float = selected_node.get_height(sx, sz) + origin.y + lift
+			# TKT-020 T8: sample the drape height through the node's FULL
+			# transform. The old `world - global_position` offset assumed an
+			# unrotated, unscaled terrain — the raymarch pick already handles
+			# transforms (TerrainRaymarchSystem.intersect_ray_world), so a
+			# rotated terrain drew the cursor skewed off the real surface.
+			# With identity transform this reduces to the old math exactly.
+			var lp: Vector3 = selected_node.to_local(Vector3(wx, hit_point.y, wz))
+			var h: float = selected_node.get_height(int(floor(lp.x)), int(floor(lp.z)))
+			var wy: float = selected_node.to_global(Vector3(lp.x, h, lp.z)).y + lift
 			positions[j * GRID + i] = Vector3(wx, wy, wz)
 
 			# Sample mask at the same UV. Outside the unit circle the

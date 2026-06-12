@@ -1,3 +1,30 @@
+# MobileTerrain3D V22.2 — Chunk Görünürlük + Boyama Modları (TKT-020)
+
+## F1 — Editör chunk görünürlüğü ("Chunk'lar" sekmesi)
+
+Büyük haritada her şey açıkken editör kasıyordu. Panel artık sekmeli: **Varlıklar** (eski içerik) + **Chunk'lar** (yeni). Whitelist modeli: mod açıkken SADECE yeşil işaretli chunk'lar görünür VE mesh'lenir — kapalı chunk'ların ArrayMesh'i tamamen bırakılır, rebuild'leri atlanır (harita ayarı yaparken maliyet ~sıfır). Atlanan iş "stale" olarak hatırlanır; chunk geri açılınca güncel height_data'dan bütçeli kuyrukla yeniden mesh'lenir.
+
+- N×N toggle grid + Tümünü Aç / Tümünü Kapat / Tersine Çevir + sayaç.
+- Seçim sahneye kaydedilir (birkaç yüz byte), reload'da korunur.
+- **Runtime etkilenmez**: etkin kontrol `Engine.is_editor_hint()` ister; oyunda her şey görünür. `bake_collision` mod açıkken bile TÜM chunk'ları full-res bake eder (mod geçici kapatılıp geri açılır).
+- UI yeni dosyada: `editor/ui/chunk_visibility_tab.gd` (plugin god-class'ına satır eklemek yerine — TKT-002 C5 yönü).
+- Regresyon testi: `test_chunk_visibility.gd` (gizli-atlama, stale→requeue, disable-release, runtime-inert).
+
+## F2 — Boyama modları: 🪣 Dolgu (varsayılan) / 🌫️ Yumuşak
+
+Eski davranış ("parmağı basılı tuttuğun kadar şeffaf birikir") berbat bulundu — artık **Yumuşak** adıyla AYRI ve bilinçli bir seçenek (doku geçişleri için). Varsayılan **Dolgu**: tek geçişte tam kaplama; kenar geçişini hâlâ maske/şekil falloff'u yumuşatır, güç slider'ı bu modda devre dışı (tooltip açıklar). Boya aracı seçiliyken toolbar'da mod dropdown'u çıkar.
+
+- `SplatmapSystem.paint(..., opaque)` saf parametre — eski çağrılar birebir korunur.
+- Regresyon testleri: `opaque_single_dab_full_coverage` (güçten bağımsız tam kaplama), `opaque_edge_keeps_falloff_feather` (kenar tüyü kaybolmaz).
+
+## Derin tarama (T1/T8/T9)
+
+- `fix_texture_imports.gd` (denetlenmemiş son dosya) tarandı: TKT-004 H11 kapsam guard'ları yerinde, doğrulanmış hata yok.
+- **T8**: fırça imleci drape'i artık node'un TAM transform'undan örnekliyor (`to_local`/`to_global`) — döndürülmüş/ölçekli terrain'de imleç yüzeyden kayıyordu; raymarch zaten transform-doğruydu, imleç geride kalmıştı. Kimlik transformunda eski matematikle birebir aynı.
+- DEF-007 (yeni kayıt): bake edilen collision'ın sahne reload'unda `initialize_terrain`'in Chunk_* temizliğiyle silinmesi — bake kalıcılığı ayrı tasarım turu ister.
+
+---
+
 # MobileTerrain3D V22.1 — Saha Kalite Turu (TKT-019)
 
 Tam kaynak audit + doğrulanmış hata düzeltmeleri. Tüm API iddiaları yerel Godot 4.6.2 binary'sine karşı probe edildi.

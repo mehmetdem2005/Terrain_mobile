@@ -16,6 +16,18 @@ extends Node3D
 # <1 is more aggressive (collapses sooner).
 @export var editor_lod_distance_scale: float = 1.0:
 	set = _set_editor_lod_distance_scale
+# TKT-020 F1: EDITOR-ONLY chunk visibility, whitelist model. When enabled,
+# only chunks listed in visible_chunks render AND mesh in the editor —
+# hidden chunks drop their ArrayMesh entirely and skip every rebuild, so
+# adjusting a big map costs near-zero until the user toggles regions on
+# (the "tüm terrain açık olunca kasıyor" fix). Managed from the plugin
+# panel's "Chunk'lar" tab. RUNTIME IS UNAFFECTED: the effective check
+# requires Engine.is_editor_hint(), so an exported game renders the whole
+# terrain even if the scene saved enabled=true. Both properties persist
+# in the .tscn (a few hundred bytes) so the working set survives reloads.
+@export var chunk_visibility_enabled: bool = false:
+	set = _set_chunk_visibility_enabled
+@export var visible_chunks: Array[Vector2i] = []
 @export var terrain_material: Material:
 	set = _set_material
 # Path to this terrain's companion .res under res://terrain_data/, bound
@@ -103,6 +115,20 @@ var current_paint_slot: int = 0:
 	set = _set_current_paint_slot
 var current_object_slot: int = 0:
 	set = _set_current_object_slot
+# TKT-020 F2: paint coverage mode. FILL ("Dolgu", the default) paints the
+# footprint core to full coverage in ONE pass — the mask/shape falloff
+# still feathers the edge, but holding the finger isn't required to reach
+# opacity. SOFT ("Yumuşak") is the historical gradual build-up
+# (strength × falloff per dab), kept as an explicit transition tool.
+# Session state like current_tool/brush_radius — not serialized.
+const PAINT_MODE_FILL := 0
+const PAINT_MODE_SOFT := 1
+var paint_mode: int = PAINT_MODE_FILL:
+	set = _set_paint_mode
+
+
+func _set_paint_mode(val: int) -> void:
+	paint_mode = clampi(val, PAINT_MODE_FILL, PAINT_MODE_SOFT)
 var brush_shape: int = 0
 var brush_radius: float = 8.0:
 	set = _set_brush_radius
@@ -250,6 +276,17 @@ var _last_lod_cam_pos: Vector3 = Vector3.INF
 # false/0 at runtime (the flag is only set under is_editor_hint).
 var _lod_needs_seed: bool = false
 var _lod_held_frames: int = 0
+# TKT-020 F1: chunk-visibility working state. _visible_chunk_set mirrors
+# the exported visible_chunks array for O(1) lookups in the mesh hot path;
+# _stale_hidden_chunks records chunks whose mesh build was skipped while
+# hidden (height_data may change under them — sculpting works on data, not
+# meshes), so re-showing queues a fresh rebuild instead of trusting a
+# stale or missing mesh. _force_chunk_visibility is a TEST HOOK that lets
+# headless tests exercise the editor-only behaviour; never set in
+# production code paths.
+var _visible_chunk_set: Dictionary = {}
+var _stale_hidden_chunks: Dictionary = {}
+var _force_chunk_visibility: bool = false
 var last_sculpt_pos: Vector3 = Vector3.INF
 var last_placement_pos: Vector3 = Vector3.INF
 var splatmap_data: PackedByteArray
@@ -428,6 +465,11 @@ func _validate_property(property: Dictionary) -> void:
 
 
 func _ready() -> void:
+	# TKT-020 F1: mirror the loaded whitelist BEFORE anything can cascade
+	# into initialize_terrain (the external-data load below does, in the
+	# editor) — chunk creation consults _visible_chunk_set via
+	# _editor_chunk_hidden, and an unmirrored set would hide everything.
+	_rebuild_visible_chunk_set()
 	noise_gen = FastNoiseLite.new()
 	noise_gen.noise_type = FastNoiseLite.TYPE_SIMPLEX
 	noise_gen.frequency = 0.1
@@ -971,6 +1013,15 @@ func _set_material(val: Material):
 
 
 func bake_collision():
+	# TKT-020 F1: collision is a RUNTIME artefact — it must cover the whole
+	# terrain no matter which chunks the editor whitelist is showing.
+	# Round-trip the mode off so the full-res rebuild below meshes
+	# everything; re-enabling at the end re-hides (and re-drops) the
+	# non-whitelisted meshes while their freshly-baked StaticBody3D
+	# children persist.
+	var viz_was_enabled: bool = chunk_visibility_enabled
+	if viz_was_enabled:
+		chunk_visibility_enabled = false
 	# TKT-019 H4: editor LOD decimates far chunk meshes (down to a single
 	# quad), and create_trimesh_collision bakes from the CURRENT mesh — so
 	# baking while zoomed out used to produce silently wrong (coarse)
@@ -1018,6 +1069,9 @@ func bake_collision():
 					child.owner = scene_root
 					for shape in child.get_children():
 						shape.owner = scene_root
+	# TKT-020 F1: restore the editor whitelist (see round-trip note above).
+	if viz_was_enabled:
+		chunk_visibility_enabled = true
 
 
 func _import_exr(val: bool):
@@ -1368,6 +1422,9 @@ func initialize_terrain():
 	# Drop stale per-chunk LOD before the chunk set is rebuilt so new chunks
 	# start at full resolution; the editor LOD pass re-applies within a frame.
 	_chunk_lod.clear()
+	# TKT-020 F1: stale-hidden entries refer to chunks about to be freed;
+	# _create_chunk re-marks the ones that are still whitelisted out.
+	_stale_hidden_chunks.clear()
 	# V22: linear adaptive budget (audit-chunk-budget). Old formula had a
 	# [17..32] stall zone where budget stayed at 4 despite a growing queue.
 	# Drained here in initialize_terrain via the _process loop; see below.
@@ -1504,6 +1561,14 @@ func _create_chunk(cx: int, cz: int, build_now: bool = true):
 	# Scene dock, which is what we want anyway (they're an implementation
 	# detail, not user-editable nodes).
 	chunks[Vector2i(cx, cz)] = chunk
+	# TKT-020 F1: whitelisted-out chunks start hidden and skip BOTH the
+	# sync build and the dirty queue — on a big map with visibility mode
+	# active, initialize_terrain creates cheap placeholders and nothing
+	# meshes until the user toggles regions on.
+	if _editor_chunk_hidden(Vector2i(cx, cz)):
+		chunk.visible = false
+		_stale_hidden_chunks[Vector2i(cx, cz)] = true
+		return
 	if build_now:
 		update_chunk_mesh(cx, cz)
 	else:
@@ -1515,7 +1580,14 @@ func _create_chunk(cx: int, cz: int, build_now: bool = true):
 
 
 func update_chunk_mesh(cx: int, cz: int):
-	var chunk = chunks.get(Vector2i(cx, cz))
+	# TKT-020 F1: hidden chunks never mesh — record the skipped work so
+	# re-showing rebuilds from current height_data instead of resurrecting
+	# a stale (or missing) mesh.
+	var vis_key := Vector2i(cx, cz)
+	if _editor_chunk_hidden(vis_key):
+		_stale_hidden_chunks[vis_key] = true
+		return
+	var chunk = chunks.get(vis_key)
 	if not chunk:
 		return
 	# TKT-003 Phase A.4: mesh generation extracted into systems/chunk_renderer.gd
@@ -1566,6 +1638,104 @@ func _set_editor_lod_distance_scale(val: float) -> void:
 	_last_lod_cam_pos = Vector3.INF
 
 
+# --- TKT-020 F1: editor-only chunk visibility -------------------------------
+
+
+func _set_chunk_visibility_enabled(val: bool) -> void:
+	if chunk_visibility_enabled == val:
+		return
+	chunk_visibility_enabled = val
+	_rebuild_visible_chunk_set()
+	# Applying on DISABLE is as important as on enable: every stale hidden
+	# chunk must re-queue a rebuild (TKT-019 H3 lesson — a flag that gates
+	# a queue needs its release path in the same setter).
+	_apply_chunk_visibility()
+
+
+# Mirror the exported whitelist into a Dictionary for O(1) lookups in the
+# meshing hot path (Array.has is O(n); update_chunk_mesh runs per chunk per
+# drain tick).
+func _rebuild_visible_chunk_set() -> void:
+	_visible_chunk_set.clear()
+	for coord in visible_chunks:
+		_visible_chunk_set[coord] = true
+
+
+# The effective gate. Runtime is hard-excluded: without is_editor_hint()
+# (or the headless test hook) this is always false, so exported games render
+# everything regardless of what the scene saved.
+func _editor_chunk_hidden(key: Vector2i) -> bool:
+	return (
+		chunk_visibility_enabled
+		and (Engine.is_editor_hint() or _force_chunk_visibility)
+		and not _visible_chunk_set.has(key)
+	)
+
+
+# Toggle one chunk. Maintains the exported array and the mirror set, then
+# applies the result to the live chunk node (hide+drop mesh / show+queue
+# rebuild). Called from the plugin's "Chunk'lar" tab.
+func set_chunk_visible(coord: Vector2i, on: bool) -> void:
+	if on == _visible_chunk_set.has(coord):
+		return
+	if on:
+		_visible_chunk_set[coord] = true
+		visible_chunks.append(coord)
+	else:
+		_visible_chunk_set.erase(coord)
+		visible_chunks.erase(coord)
+	_apply_chunk_visibility_one(coord)
+
+
+# Bulk: whitelist everything (on=true) or nothing (on=false).
+func set_all_chunks_visible(on: bool) -> void:
+	visible_chunks.clear()
+	_visible_chunk_set.clear()
+	if on:
+		for key in chunks.keys():
+			_visible_chunk_set[key] = true
+			visible_chunks.append(key)
+	_apply_chunk_visibility()
+
+
+# Bulk: flip the whitelist against the current chunk grid.
+func invert_chunk_visibility() -> void:
+	var inverted: Dictionary = {}
+	visible_chunks.clear()
+	for key in chunks.keys():
+		if not _visible_chunk_set.has(key):
+			inverted[key] = true
+			visible_chunks.append(key)
+	_visible_chunk_set = inverted
+	_apply_chunk_visibility()
+
+
+func _apply_chunk_visibility() -> void:
+	for key in chunks.keys():
+		_apply_chunk_visibility_one(key)
+
+
+func _apply_chunk_visibility_one(key: Vector2i) -> void:
+	var chunk = chunks.get(key)
+	if chunk == null or not is_instance_valid(chunk):
+		return
+	if _editor_chunk_hidden(key):
+		chunk.visible = false
+		# Drop the ArrayMesh so a hidden chunk costs ~nothing (the node
+		# stays as an empty placeholder). height_data is untouched; the
+		# stale mark guarantees a fresh rebuild on re-show.
+		chunk.mesh = null
+		_stale_hidden_chunks[key] = true
+		dirty_chunks.erase(key)
+	else:
+		chunk.visible = true
+		if _stale_hidden_chunks.has(key):
+			_stale_hidden_chunks.erase(key)
+			# Budgeted drain rebuilds it — a single chunk can be a 1024²
+			# monster on auto-bumped maps, so never build synchronously here.
+			dirty_chunks[key] = true
+
+
 # Editor-only: re-evaluate every chunk's LOD against the 3D editor camera
 # distance and mark any whose stride changed dirty. The budgeted drain in
 # _process rebuilds them over subsequent frames, so a sudden zoom-to-bird's-eye
@@ -1588,6 +1758,10 @@ func _update_editor_lod(force: bool = false) -> bool:
 	var origin: Vector3 = global_transform.origin
 	var half: float = float(chunk_size) * 0.5
 	for key in chunks.keys():
+		# TKT-020 F1: hidden chunks don't mesh, so re-evaluating their LOD
+		# only churns the dirty queue (the drain would skip them anyway).
+		if _editor_chunk_hidden(key):
+			continue
 		var centre: Vector3 = origin + Vector3(
 			float(key.x) * chunk_size + half, 0.0, float(key.y) * chunk_size + half
 		)
@@ -2066,7 +2240,13 @@ func _apply_brush_single(hit_point: Vector3):
 	# inside each function. The user experience: doubling the slider
 	# doubles the per-dab effect, max never feels destructive.
 	if current_tool == 7:  # Paint
-		_paint_splatmap(local_pos.x, local_pos.z, brush_radius, brush_strength * 0.1)
+		# TKT-020 F2: FILL covers in one pass (falloff-only blend; strength
+		# is irrelevant and the toolbar disables its slider). SOFT keeps the
+		# historical strength-scaled gradual build-up for transitions.
+		if paint_mode == PAINT_MODE_FILL:
+			_paint_splatmap(local_pos.x, local_pos.z, brush_radius, 1.0, true)
+		else:
+			_paint_splatmap(local_pos.x, local_pos.z, brush_radius, brush_strength * 0.1)
 		return
 	# V22 Phase 4: sculpt ops delegated to SculptOps. The chunk-dirty
 	# callback is bound here so SculptOps doesn't need to know about the
@@ -2145,7 +2325,7 @@ func _apply_brush_single(hit_point: Vector3):
 			)
 
 
-func _paint_splatmap(cx: float, cz: float, radius: float, strength: float):
+func _paint_splatmap(cx: float, cz: float, radius: float, strength: float, opaque: bool = false):
 	# V22: explicit zero-based range guard; warns on slot 5+ instead of
 	# silently doing nothing (RGBA8 splatmap only has 4 channels).
 	if not (0 <= current_paint_slot and current_paint_slot < TerrainConstants.SPLATMAP_SLOT_COUNT):
@@ -2201,7 +2381,7 @@ func _paint_splatmap(cx: float, cz: float, radius: float, strength: float):
 	# lives in SplatmapSystem.paint. TKT-019 H1: cached BrushSystem (see
 	# _get_brush_system) — per-dab construction re-baked the mask LUT.
 	var brush := _get_brush_system()
-	SplatmapSystem.paint(img, map_size, cx, cz, radius, strength, current_paint_slot, brush)
+	SplatmapSystem.paint(img, map_size, cx, cz, radius, strength, current_paint_slot, brush, opaque)
 
 	# V22: null guard. splatmap_texture_local can be nulled between
 	# start_stroke and now in pathological cases (eg user resized map

@@ -30,6 +30,12 @@ extends RefCounted
 #   strength    — base brush strength in [0..1].
 #   paint_slot  — which channel to boost: 0=R, 1=G, 2=B, 3=A.
 #   brush       — pre-constructed BrushSystem providing footprint + falloff.
+#   opaque      — TKT-020 F2 "Dolgu" mode: blend = falloff alone (strength
+#                 ignored), so one pass paints the footprint core to FULL
+#                 coverage while the mask/shape falloff still feathers the
+#                 edge. false (default) keeps the historical "Yumuşak"
+#                 build-up (blend = strength × falloff per dab) the user
+#                 now opts into for transitions.
 static func paint(
 	img: Image,
 	map_size: int,
@@ -38,7 +44,8 @@ static func paint(
 	radius: float,
 	strength: float,
 	paint_slot: int,
-	brush: BrushSystem
+	brush: BrushSystem,
+	opaque: bool = false
 ) -> bool:
 	# Slot range — splatmap is RGBA8, only 4 channels. Caller emits MT-* code.
 	if paint_slot < 0 or paint_slot >= 4:
@@ -59,7 +66,8 @@ static func paint(
 		radius,
 		func(x: int, z: int, falloff: float) -> void:
 			var color: Color = img.get_pixel(x, z)
-			var blend_factor: float = clampf(strength * falloff, 0.0, 1.0)
+			var raw_blend: float = falloff if opaque else strength * falloff
+			var blend_factor: float = clampf(raw_blend, 0.0, 1.0)
 			var inv: float = 1.0 - blend_factor
 			color.r *= inv
 			color.g *= inv

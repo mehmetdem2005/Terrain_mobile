@@ -95,9 +95,13 @@ echo "==> 15/16 editor LOD seed unit test (load-spike fix + TKT-019 H3 lod-disab
 godot --headless --script unit_tests/test_editor_lod_seed.gd 2>&1 | tee /tmp/editor_lod_seed.log
 grep -q "^EDITOR_LOD_SEED_OK" /tmp/editor_lod_seed.log
 
-echo "==> 16/16 brush system cache (TKT-019 H1: no per-dab mask LUT re-bake)"
+echo "==> 16/17 brush system cache (TKT-019 H1: no per-dab mask LUT re-bake)"
 godot --headless --script unit_tests/test_brush_cache.gd 2>&1 | tee /tmp/brush_cache.log
 grep -q "^BRUSH_CACHE_TEST_OK" /tmp/brush_cache.log
+
+echo "==> 17/17 chunk visibility (TKT-020 F1: editor whitelist, hidden-skip, runtime-inert)"
+godot --headless --script unit_tests/test_chunk_visibility.gd 2>&1 | tee /tmp/chunk_visibility.log
+grep -q "^CHUNK_VISIBILITY_TEST_OK" /tmp/chunk_visibility.log
 
 echo
 echo "ALL TESTS PASSED"

@@ -1,0 +1,190 @@
+{
+  "id": "TKT-020",
+  "title": "V22.2 — Deep scan + chunk visibility tab (editor-only) + opaque/soft paint modes",
+  "kind": "feature_and_audit",
+  "size": "XL",
+  "target_godot": "4.6.2",
+  "target_platform": "mobile",
+  "priority": "high",
+  "mode": "full",
+  "state": "CLOSED",
+  "created_at": "2026-06-12",
+  "user_request": {
+    "raw": "Daha derin tara; editörde haritayı ayarlarken tüm terrain açık olunca kasıyor → chunk görünürlük aç/kapa (sadece editör, sadece toggle açtıklarım gözüksün, yeni sekmeye); boyama berbat — basılı tuttuğum kadar şeffaf boyuyor → şeffaf boyama AYRI özellik olsun (geçişler için), normal boyama dolgu olsun; JSON plan + task üret, AAA; baştan kötüyse daha geliştir.",
+    "interpreted": [
+      "F1: Editor-only chunk visibility manager — whitelist model (only toggled-on chunks render & mesh), new tab in plugin panel, bulk ops, persists in scene, runtime untouched.",
+      "F2: Paint modes — FILL (default: one pass = full coverage, mask/falloff shapes the edge) and SOFT (current gradual transparent build-up, kept as explicit transition tool).",
+      "F3: Deeper audit pass — cover fix_texture_imports.gd (only unread file), cursor/transform correctness, cross-module wiring; fix verified defects only.",
+      "F4: Architecture — new UI goes into editor/ui/ module (not into the 2.3K-line plugin god-class); systems stay testable headless."
+    ]
+  },
+  "architecture_decisions": {
+    "ADR-020-1": "Chunk visibility state lives ON the node (@export enabled flag + Array[Vector2i] whitelist — a few hundred bytes in .tscn) because it must survive reloads and drive chunk lifecycle; UI lives in editor/ui/chunk_visibility_tab.gd (new file) so plugin.gd does not grow another panel inline.",
+    "ADR-020-2": "Hidden chunks are not just .visible=false: their mesh is set to null (ArrayMesh freed) and meshing is SKIPPED (update_chunk_mesh early-out → stale set). This converts the user's lag (full-map meshing during map adjustments) into near-zero cost; re-showing queues a budgeted rebuild from height_data.",
+    "ADR-020-3": "Editor-only gating happens at the EFFECTIVE check (Engine.is_editor_hint() or _force_chunk_visibility test hook), so an exported game always renders everything even if the scene saved enabled=true.",
+    "ADR-020-4": "Paint opacity is a SplatmapSystem parameter (opaque: bool, default false) — pure, headless-testable; node holds paint_mode (FILL default — the user calls the old behaviour 'berbat', so the good mode must be the default); strength slider is disabled+tooltipped in FILL (falloff alone shapes the dab).",
+    "ADR-020-5": "bake_collision temporarily disables visibility mode (setter round-trip) so collision always bakes ALL chunks at full res — runtime collision must not depend on editor visibility."
+  },
+  "tasks": [
+    {
+      "id": "T1",
+      "phase": "1.B discover",
+      "title": "Deep scan: read fix_texture_imports.gd (last unread file), grep pitfall patterns, recheck cross-module wiring after V22.1",
+      "deps": [],
+      "status": "done"
+    },
+    {
+      "id": "T2",
+      "phase": "1.F build",
+      "title": "SplatmapSystem.paint gains opaque param (blend = falloff in opaque, strength*falloff in soft); contract-compatible default",
+      "deps": [
+        "T1"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "T3",
+      "phase": "1.F build",
+      "title": "Node: PAINT_MODE_FILL/SOFT consts + paint_mode var; _apply_brush_single routes mode; _paint_splatmap threads opaque through",
+      "deps": [
+        "T2"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "T4",
+      "phase": "1.F build",
+      "title": "Plugin UI: paint-mode dropdown (🪣 Dolgu / 🌫️ Yumuşak) shown with Boya tool; strength slider disabled in FILL; _edit sync",
+      "deps": [
+        "T3"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "T5",
+      "phase": "1.F build",
+      "title": "Node: chunk visibility core — @export enabled+whitelist, _visible_chunk_set mirror, _editor_chunk_hidden(), set_chunk_visible / set_all / invert API, _apply_chunk_visibility, stale-hidden bookkeeping",
+      "deps": [
+        "T1"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "T6",
+      "phase": "1.F build",
+      "title": "Node integration: update_chunk_mesh skip+stale, _create_chunk skips build for hidden, _update_editor_lod skips hidden, initialize_terrain applies visibility, bake_collision visibility round-trip",
+      "deps": [
+        "T5"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "T7",
+      "phase": "1.F build",
+      "title": "editor/ui/chunk_visibility_tab.gd (NEW): master toggle, Tümü Aç/Kapat/Tersine, N×N toggle grid (≤33² cells guarded), count label; panel restructured into TabContainer (Varlıklar / Chunk'lar)",
+      "deps": [
+        "T6"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "T8",
+      "phase": "1.F build",
+      "title": "Deep-scan fix: _conform_brush_to_surface drapes via to_local/to_global (cursor was translation-only — misaligned on rotated/scaled terrain)",
+      "deps": [
+        "T1"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "T9",
+      "phase": "1.F build",
+      "title": "Deep-scan fixes from T1 findings in fix_texture_imports.gd / elsewhere (verified-only)",
+      "deps": [
+        "T1"
+      ],
+      "status": "done",
+      "result": "fix_texture_imports.gd clean (H11 guards verified); no additional verified defects — no code change needed"
+    },
+    {
+      "id": "T10",
+      "phase": "1.G integrate",
+      "title": "Tests: splatmap opaque coverage + soft regression; NEW test_chunk_visibility.gd (hidden skip+stale, show requeues, disable restores, runtime-inert); run_all.sh wiring",
+      "deps": [
+        "T4",
+        "T7"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "T11",
+      "phase": "1.G integrate",
+      "title": "Full pipeline: 17+ suites green, gdlint on touched files, version 22.2, CHANGES.md, knowledge-loop lessons, ticket close, commit+push",
+      "deps": [
+        "T10"
+      ],
+      "status": "done"
+    }
+  ],
+  "risk_register": [
+    {
+      "id": "R1",
+      "risk": "Hidden-chunk skip starves bake_collision or force_update_all (wrong collision / stale meshes)",
+      "probability": "medium",
+      "impact": "high",
+      "mitigation": "ADR-020-5 round-trip + stale set is the single source of 'needs rebuild'; test asserts re-show requeues",
+      "owner": "Engine"
+    },
+    {
+      "id": "R2",
+      "risk": "Visibility state leaks to runtime (player sees holes)",
+      "probability": "low",
+      "impact": "critical",
+      "mitigation": "ADR-020-3 effective-check gating + runtime-inert unit test",
+      "owner": "QA"
+    },
+    {
+      "id": "R3",
+      "risk": "TabContainer restructure breaks existing asset-manager teardown (signal disconnect walk, queue_free)",
+      "probability": "medium",
+      "impact": "medium",
+      "mitigation": "_exit_tree walks the same panel root; tab children are descendants — no new teardown path needed; editor puppet smoke covers open/close",
+      "owner": "Tools"
+    },
+    {
+      "id": "R4",
+      "risk": "FILL default changes existing users' muscle memory",
+      "probability": "high",
+      "impact": "low",
+      "mitigation": "User explicitly demands it; SOFT is one dropdown away and documented in CHANGES",
+      "owner": "Producer"
+    },
+    {
+      "id": "R5",
+      "risk": "1024-chunk grids make the tab itself laggy on mobile editor",
+      "probability": "medium",
+      "impact": "medium",
+      "mitigation": "Grid capped at 33×33 cells with warning label (auto-bump already guarantees ≤32×32 except 'extreme' maps)",
+      "owner": "Mobile Perf"
+    }
+  ],
+  "predictive_checklist_applied": [
+    "game-defect: 'editor-only state observable at runtime' → R2 test",
+    "plugin-defect: 'queue gated by a flag with no release path' (TKT-019 H3 lesson) → disabling visibility mode re-dirties stale chunks in the SAME setter",
+    "plugin-defect: 'per-dab construction of init-heavy objects' (TKT-019 H1 lesson) → tab grid built once per refresh, not per frame",
+    "plugin-defect: 'signal connect without matching disconnect on teardown' → tab uses plugin-owned callbacks, covered by _disconnect_all_signals_recursive walk"
+  ],
+  "closed_at": "2026-06-12",
+  "quality_gate": "PASS — 17/17 suites green (new: test_chunk_visibility.gd, 2 opaque paint cases in splatmap suite); gdlint clean on all new/changed files; parse check green",
+  "honesty_audit": "PASS with disclosed gaps: tab UI interaction (TabContainer, grid buttons, dropdown) is editor-runtime — not coverable headless, needs a manual editor pass; cursor transform fix verified by math equivalence at identity, not visually on a rotated terrain",
+  "risk_register_reconciliation": {
+    "R1": "mitigated — bake round-trip implemented + test asserts stale→requeue",
+    "R2": "mitigated — runtime-inert unit test in place",
+    "R3": "mitigated — tab children ride the existing panel teardown walk; no new top-level controls",
+    "R4": "accepted — FILL default per explicit user demand, documented in CHANGES",
+    "R5": "mitigated — 33×33 grid cap with notice label"
+  },
+  "deferred_new": [
+    "DEF-007: baked collision does not survive scene reload (initialize_terrain frees Chunk_* nodes incl. their StaticBody3D children) — pre-existing design gap, needs its own persistence design"
+  ]
+}

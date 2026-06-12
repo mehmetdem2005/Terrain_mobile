@@ -24,6 +24,8 @@ func _init() -> void:
 	_run("paint_all_four_slots_routable", _test_all_slots, failures)
 	_run("paint_full_strength_boosts_to_one", _test_full_strength, failures)
 	_run("paint_outside_radius_unchanged", _test_outside_radius, failures)
+	_run("opaque_single_dab_full_coverage", _test_opaque_full_coverage, failures)
+	_run("opaque_edge_keeps_falloff_feather", _test_opaque_edge_feather, failures)
 
 	if failures.is_empty():
 		print("SPLATMAP_SYSTEM_TEST_OK")
@@ -134,6 +136,45 @@ func _test_full_strength() -> String:
 	if centre.r > 0.1 or centre.g > 0.1 or centre.a > 0.1:
 		return "non-target channels should be ~0 at full strength, got (R=%f, G=%f, A=%f)" % [centre.r, centre.g, centre.a]
 	return ""
+
+func _test_opaque_full_coverage() -> String:
+	# TKT-020 F2 (Dolgu): with opaque=true the blend is falloff alone —
+	# strength must be IGNORED. A hard brush (shape=1, falloff=1 across the
+	# footprint) with a deliberately tiny strength must still paint the
+	# centre to full coverage in ONE dab. Under the old soft semantics this
+	# dab would have moved G by only ~0.05.
+	var img := _make_initial_splatmap()
+	var hard_brush := BrushSystemScript.new(MAP_SIZE, null, null, 1, null)
+	var ok: bool = SplatmapSystemScript.paint(
+		img, MAP_SIZE, 16.0, 16.0, 4.0, 0.05, 1, hard_brush, true
+	)
+	if not ok:
+		return "opaque paint returned false on valid inputs"
+	var centre: Color = img.get_pixel(16, 16)
+	if centre.g < 0.99:
+		return "opaque centre G should be ~1.0 in one dab regardless of strength, got %f" % centre.g
+	if centre.r > 0.01:
+		return "opaque centre R should be wiped to ~0, got %f" % centre.r
+	return ""
+
+
+func _test_opaque_edge_feather() -> String:
+	# TKT-020 F2: opaque is NOT aliased — a soft-falloff brush still
+	# feathers the footprint edge (blend = falloff there), it only
+	# guarantees the core reaches full coverage.
+	var img := _make_initial_splatmap()
+	var soft_brush := _make_brush()  # shape 0, smoothstep falloff
+	SplatmapSystemScript.paint(img, MAP_SIZE, 16.0, 16.0, 4.0, 1.0, 1, soft_brush, true)
+	# (19, 16) is 3 cells out on a radius of 4 → falloff strictly between
+	# 0 and 1 → partial blend.
+	var edge: Color = img.get_pixel(19, 16)
+	if edge.g <= 0.01 or edge.g >= 0.95:
+		return "opaque edge G should be a partial feather (0 < g < 0.95), got %f" % edge.g
+	var centre: Color = img.get_pixel(16, 16)
+	if centre.g < 0.99:
+		return "opaque centre with soft brush should still reach ~1.0, got %f" % centre.g
+	return ""
+
 
 func _test_outside_radius() -> String:
 	# Pixels well outside the brush radius should not be touched.
