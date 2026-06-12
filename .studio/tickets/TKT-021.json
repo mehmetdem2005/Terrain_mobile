@@ -1,0 +1,78 @@
+{
+  "id": "TKT-021",
+  "title": "22.4.0 — Mobile-first editor UI overhaul (panel rewrite)",
+  "kind": "ui_rewrite",
+  "size": "XL",
+  "target_godot": "4.6.x (Android editor)",
+  "target_platform": "mobile",
+  "priority": "ship-blocker",
+  "mode": "full",
+  "state": "CLOSED",
+  "created_at": "2026-06-12",
+  "user_request": {
+    "raw": "tüm paneli düzelt, ekranı kontrol edemiyorum kayma oluyor, ekran küçücük mobil için uyarla, kullanım çok zor; araçlar kötü çalışıyor gerekirse baştan yaz, arayüzü düzelt.",
+    "diagnosis_from_screenshot": [
+      "Spatial-menu toolbar reserves a 1100×45 ScrollContainer → horizontal drag on the top band scrolls the TOOLBAR (the 'kayma'), and on a phone most controls live off-screen.",
+      "asset_manager_panel (430×360 fixed) floats over the already-tiny 3D viewport; with the toolbar band + Godot chrome the viewport is a thin strip — 'ekranı kontrol edemiyorum'.",
+      "Touch targets (24-31px) under Android editor minimums; slider rows too wide to reach."
+    ]
+  },
+  "architecture_decisions": {
+    "ADR-021-1": "Spatial menu shrinks to TWO buttons (Fırça AÇIK/KAPALI + 🏔 Panel). The 1100px ScrollContainer is deleted outright — nothing in the top band scrolls, the viewport regains the full row height.",
+    "ADR-021-2": "ALL tool controls move into ONE unified left-edge panel (editor/ui/terrain_panel.gd, new class TerrainPanel): full-height anchored, 340px wide, tabs Fırça / Varlıklar / Chunk'lar, header ✕ to dismiss. Hidden by default so the viewport starts free; state mirrored on the 🏔 toggle.",
+    "ADR-021-3": "Plugin KEEPS ownership of all control member vars and handlers (tool_opt, sliders, pickers…) — the panel is a dumb shell with tab roots the plugin fills. Zero handler churn = zero behaviour regression risk; asset_manager_panel var now IS the TerrainPanel so every existing hide/show/teardown call keeps working.",
+    "ADR-021-4": "Touch ergonomics: every interactive row ≥ 38px min height, dropdowns full-width, slider+spinbox pairs share a row; tab contents scroll vertically inside the panel."
+  },
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "TerrainPanel shell (editor/ui/terrain_panel.gd): anchored left full-height, header(title+✕), TabContainer, scrolled tab factory, closed signal",
+      "status": "done"
+    },
+    {
+      "id": "T2",
+      "title": "plugin _build_main_ui rewrite: 2-button menu strip (brush toggle + panel toggle), delete 1100px scroll band",
+      "status": "done"
+    },
+    {
+      "id": "T3",
+      "title": "Brush tab: move tool/paint-mode/texture/object/shape/mask/radius/strength controls into panel rows; row-visibility replaces opt-visibility in _update_ui_visibility",
+      "status": "done"
+    },
+    {
+      "id": "T4",
+      "title": "Assets + Chunk tabs re-homed into TerrainPanel; _toggle_asset_manager drives panel + syncs toggle button; _edit refreshes open panel",
+      "status": "done"
+    },
+    {
+      "id": "T5",
+      "title": "Teardown/lifecycle audit: _exit_tree walk, _make_visible paths, mask-popup anchoring still valid",
+      "status": "done"
+    },
+    {
+      "id": "T6",
+      "title": "Quality gate: parse + 18-suite pipeline green, gdlint, 22.4.0, CHANGES, commit+push main, ship addon zip",
+      "status": "done"
+    }
+  ],
+  "risk_register": [
+    {
+      "id": "R1",
+      "risk": "Handler/control re-parenting breaks a signal path (silent dead control)",
+      "mitigation": "ADR-021-3: controls + handlers stay plugin-owned; only parents change. Grep-verify every member var is still constructed exactly once."
+    },
+    {
+      "id": "R2",
+      "risk": "Panel overlay still eats the viewport",
+      "mitigation": "Hidden by default; 340px fixed width (~17% of a 2000px landscape); ✕ + menu toggle both dismiss."
+    },
+    {
+      "id": "R3",
+      "risk": "Headless suite can't see UI regressions",
+      "mitigation": "Parse check + suite guard logic only; honest disclosure that layout needs a device pass — user IS the device tester and asked for this iteration."
+    }
+  ],
+  "closed_at": "2026-06-12",
+  "quality_gate": "PASS — 18/18 suites green post-rewrite; gdlint: terrain_panel.gd clean, plugin delta +1 finding in a pre-existing cosmetic category (class-definitions-order baseline 32→33)",
+  "honesty_audit": "PASS with disclosure: layout/touch verification REQUIRES the Android device — headless covers parse + logic only. User performs the device pass; panel anchors/row heights are best-effort until then."
+}

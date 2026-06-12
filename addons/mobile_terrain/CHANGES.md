@@ -1,5 +1,37 @@
 # MobileTerrain3D — Changelog
 
+## 22.4.0 (2026-06-12) — MOBİL-ÖNCELİKLİ ARAYÜZ (TKT-021)
+
+Telefon ekran görüntüsüne göre kökten revizyon ("ekranı kontrol edemiyorum,
+kayma oluyor, kullanım çok zor"):
+
+- **"Kayma" kökten çözüldü:** üst şeritteki 1100×45'lik yatay
+  ScrollContainer bandı tamamen SİLİNDİ — ekranın üstünde sürüklenince
+  toolbar'ı kaydıran oydu. Üst şeritte artık yalnız 2 buton var:
+  **Fırça AÇIK/KAPALI** + **🏔 Panel**. Viewport tüm satırı geri kazandı.
+- **Tek birleşik panel** (`editor/ui/terrain_panel.gd`, yeni sınıf):
+  sol kenara tam boy yapışık, 340px, ✕ ile kapanır, varsayılan KAPALI
+  (viewport boş başlar). Sekmeler:
+  - **Fırça:** Araç / Mod (Dolgu-Yumuşak) / Doku / Obje / Şekil+Maske /
+    Çap / Güç — hepsi alt alta, satırlar ≥40px (dokunmatik hedef),
+    slider+spinbox ikilisi aynı satırda.
+  - **Varlıklar:** ayarlar + doku/obje slotları artık TEK SÜTUN (eski iki
+    sütun panelde ~150px'e sıkışıyordu, dokunulamıyordu).
+  - **Chunk'lar:** TKT-020 görünürlük tahtası aynen.
+- Panel toggle'ı ile panelin ✕'i iki yönlü senkron; terrain değiştirince
+  açık panel kendini yeniler.
+- Eski "Varlıkları Yönet" butonu kalktı (🏔 Panel onun yerine).
+- Davranış AYNEN korundu: tüm kontroller ve sinyal handler'ları plugin'de
+  kaldı, yalnız ebeveynleri değişti (ADR-021-3) — 18 test suite'i yeşil.
+- Ölü kod temizliği: çağıranı olmayan `_on_texture_slot_selected` /
+  `_on_object_slot_selected` kaldırıldı (index-tabanlı eski handler yanlış
+  slot'a bile yazardı).
+
+Not: yerleşim doğrulaması cihaz gerektirir — headless suite mantığı korur,
+pikselleri göremez. Bu sürüm tam da o cihaz turu için.
+
+---
+
 ## 22.3.0 (2026-06-12) — KONSOLİDASYON: tüm dallar main'de
 
 Üç paralel geliştirme hattı tek `main` dalında birleştirildi:

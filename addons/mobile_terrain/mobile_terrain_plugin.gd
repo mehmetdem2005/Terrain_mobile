@@ -33,7 +33,19 @@ var strength_spinbox: SpinBox
 # semantics get fragile when both signals fire on the same frame.
 var _syncing_brush_controls: bool = false
 
-var asset_manager_panel: PanelContainer
+# TKT-021 (ADR-021-2/3): the ONE unified mobile panel (editor/ui/
+# terrain_panel.gd). Keeps this historical var name because every existing
+# hide/show/teardown call site treats it as "the plugin's floating panel" —
+# and that contract is unchanged, only the layout moved.
+var asset_manager_panel: TerrainPanel
+# TKT-021: spatial-menu toggle that mirrors the panel's visibility.
+var panel_toggle_btn: Button
+# TKT-021: tool-dependent rows inside the Fırça tab. _update_ui_visibility
+# toggles whole rows (label + control) instead of bare OptionButtons so the
+# layout never leaves orphan labels behind.
+var _paint_mode_row: HBoxContainer
+var _paint_slot_row: HBoxContainer
+var _object_slot_row: HBoxContainer
 var tex_list_vbox: VBoxContainer
 var obj_list_vbox: VBoxContainer
 # TKT-020 F1: the "Chunk'lar" tab (editor/ui/chunk_visibility_tab.gd) living
@@ -335,63 +347,84 @@ func _ensure_ui_built() -> void:
 
 
 func _build_main_ui():
+	# TKT-021 (ADR-021-1): the spatial-menu strip holds exactly TWO buttons.
+	# The old 1100×45 ScrollContainer band is GONE — its internal horizontal
+	# scrolling hijacked drags across the top of a phone screen (the
+	# reported "kayma") and pushed most controls off-screen. Every tool
+	# control now lives in the TerrainPanel (see _build_asset_manager_ui /
+	# _build_brush_tab); the viewport gets the whole row back.
 	ui_container = MarginContainer.new()
 	ui_container.hide()
-	ui_container.add_theme_constant_override("margin_left", 10)
-	ui_container.add_theme_constant_override("margin_top", 10)
-
-	var vbox = VBoxContainer.new()
-	ui_container.add_child(vbox)
-
-	var scroll = ScrollContainer.new()
-	# V21: panel-width strategy. Tried `SIZE_EXPAND_FILL` on the outer
-	# MarginContainer to grab parent width — didn't work because
-	# CONTAINER_SPATIAL_EDITOR_MENU is an HFlowContainer that lays children
-	# at their NATURAL width and wraps to the next row when full; it
-	# ignores expand flags on direct children.
-	#
-	# Final approach: pin a wide structural minimum on the ScrollContainer
-	# (1100×45) so the toolbar reserves that much horizontal real estate,
-	# then mark the sliders inside the toolbar SIZE_EXPAND_FILL so they
-	# absorb the extra width and look proportional. On narrower screens
-	# (small tablet portrait) the horizontal scrollbar appears — graceful
-	# fallback rather than clipping.
-	scroll.custom_minimum_size = Vector2(1100, 45)
-	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	vbox.add_child(scroll)
+	ui_container.add_theme_constant_override("margin_left", 6)
+	ui_container.add_theme_constant_override("margin_top", 4)
 
 	toolbar = HBoxContainer.new()
-	# Grow to fill the scroll's wider footprint. Without this the toolbar
-	# would sit at the sum of its children's min widths (~700px) and the
-	# right portion of the scroll would be empty.
-	toolbar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(toolbar)
+	toolbar.add_theme_constant_override("separation", 6)
+	ui_container.add_child(toolbar)
 
-	# V21: brush master toggle. Positioned FIRST in the toolbar so it's
-	# easy to reach on mobile — zoom/pan gestures need the brush off to
-	# avoid accidental edits, and reaching across the toolbar to toggle
-	# is exactly the friction that makes users disable plugins. With it
-	# at the left edge, thumb-toggle stays in flow.
-	#
-	# Toggle button (not a checkbox) because:
-	#   - Visual state is loud (green=on / red=off background)
-	#   - One tap = one action — no "did the checkbox flip" ambiguity
-	#   - Big tap target on touch screens
+	# V21: brush master toggle — kept in the strip (not the panel) because
+	# it's the one control needed while the panel is CLOSED: zoom/pan
+	# gestures want the brush off, and reaching into a panel to toggle is
+	# exactly the friction that makes users disable plugins. Loud
+	# green/red styling per _apply_brush_toggle_style.
 	brush_toggle_btn = Button.new()
 	brush_toggle_btn.toggle_mode = true
 	brush_toggle_btn.button_pressed = brush_enabled
-	brush_toggle_btn.custom_minimum_size = Vector2(110, 0)
+	brush_toggle_btn.custom_minimum_size = Vector2(120, 40)
 	brush_toggle_btn.toggled.connect(_on_brush_toggle)
 	_apply_brush_toggle_style()
 	toolbar.add_child(brush_toggle_btn)
 
-	toolbar.add_child(VSeparator.new())
+	# TKT-021: panel toggle — mirrors TerrainPanel.visible both ways (the
+	# panel's ✕ un-presses this via the closed signal).
+	panel_toggle_btn = Button.new()
+	panel_toggle_btn.toggle_mode = true
+	panel_toggle_btn.text = "🏔 Panel"
+	panel_toggle_btn.tooltip_text = "Terrain panelini aç/kapat (araçlar, varlıklar, chunk'lar)"
+	panel_toggle_btn.custom_minimum_size = Vector2(110, 40)
+	panel_toggle_btn.toggled.connect(_on_panel_toggle)
+	toolbar.add_child(panel_toggle_btn)
 
-	var label = Label.new()
-	label.text = " Araç: "
-	toolbar.add_child(label)
+	add_control_to_container(EditorPlugin.CONTAINER_SPATIAL_EDITOR_MENU, ui_container)
 
+	# V21 note kept: the brush-mask popup is still built lazily on FIRST
+	# press of the 🖌 Maske button (now inside the panel) so plugin load
+	# never races the importer over brushes/*.png.
+
+
+# TKT-021: panel toggle handler. Routes through _toggle_asset_manager so
+# open-refresh behaviour stays identical whatever opens the panel.
+func _on_panel_toggle(pressed: bool) -> void:
+	if asset_manager_panel == null:
+		return
+	if pressed and not asset_manager_panel.visible:
+		_toggle_asset_manager()
+	elif not pressed and asset_manager_panel.visible:
+		asset_manager_panel.hide()
+
+
+# TKT-021 (ADR-021-4): one labelled control row for the Fırça tab. Returns
+# the HBox so callers can keep a reference for show/hide. ≥40px row height
+# = Android-editor-friendly touch target.
+func _brush_row(parent: Control, label_text: String) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.custom_minimum_size = Vector2(0, 40)
+	row.add_theme_constant_override("separation", 6)
+	if label_text != "":
+		var lbl := Label.new()
+		lbl.text = label_text
+		lbl.custom_minimum_size = Vector2(58, 0)
+		lbl.add_theme_color_override("font_color", Color(0.72, 0.72, 0.78))
+		row.add_child(lbl)
+	parent.add_child(row)
+	return row
+
+
+# TKT-021 (ADR-021-3): builds the Fırça tab CONTENT into the panel. Every
+# control keeps its historical member var + handler — only the parent and
+# the layout (vertical rows instead of one endless toolbar) changed.
+func _build_brush_tab(parent: VBoxContainer) -> void:
+	var tool_row := _brush_row(parent, "Araç")
 	tool_opt = OptionButton.new()
 	tool_opt.add_item("⛰️ Yükselt", 0)
 	tool_opt.add_item("🕳️ Alçalt", 1)
@@ -402,30 +435,13 @@ func _build_main_ui():
 	tool_opt.add_item("📉 Erozyon", 6)  # V19 PRO TOOL
 	tool_opt.add_item("🖌️ Boya", 7)
 	tool_opt.add_item("🌳 Obje Ekle", 8)
+	tool_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tool_opt.item_selected.connect(_on_tool_selected)
-	toolbar.add_child(tool_opt)
+	tool_row.add_child(tool_opt)
 
-	texture_opt = OptionButton.new()
-	texture_opt.name = "TextureOpt"
-	# V21: callback resolves index → id, same reason as _on_tool_selected.
-	# When a slot is deleted, the remaining slots keep their original IDs
-	# (e.g. delete slot 1 → remaining items have IDs 0, 2, 3 at indices
-	# 0, 1, 2). Passing the raw idx would set current_paint_slot to the
-	# WRONG slot, scrambling subsequent paint strokes.
-	texture_opt.item_selected.connect(
-		func(idx):
-			if selected_node:
-				selected_node.current_paint_slot = texture_opt.get_item_id(idx)
-				# TKT-018: re-sync the per-slot PBR sliders to the new slot.
-				_refresh_settings_controls()
-	)
-	texture_opt.hide()
-	toolbar.add_child(texture_opt)
-
-	# TKT-020 F2: paint coverage mode. Dolgu = one pass paints the footprint
-	# core to FULL coverage (the mask/shape falloff still feathers the edge);
-	# Yumuşak = the historical gradual build-up, kept for blending
-	# transitions between textures. ID-based like every other dropdown.
+	# TKT-020 F2: paint coverage mode (🪣 Dolgu / 🌫️ Yumuşak). Row shown
+	# only while the Boya tool is active (_update_ui_visibility).
+	_paint_mode_row = _brush_row(parent, "Mod")
 	paint_mode_opt = OptionButton.new()
 	paint_mode_opt.name = "PaintModeOpt"
 	paint_mode_opt.add_item("🪣 Dolgu", TerrainNode.PAINT_MODE_FILL)
@@ -434,150 +450,104 @@ func _build_main_ui():
 		"Dolgu: tek geçişte tam boya (güç kullanılmaz; kenarı maske/şekil yumuşatır)."
 		+ "\nYumuşak: bastıkça birikir — doku geçişleri için."
 	)
+	paint_mode_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	paint_mode_opt.item_selected.connect(_on_paint_mode_selected)
-	paint_mode_opt.hide()
-	toolbar.add_child(paint_mode_opt)
+	_paint_mode_row.add_child(paint_mode_opt)
 
+	_paint_slot_row = _brush_row(parent, "Doku")
+	texture_opt = OptionButton.new()
+	texture_opt.name = "TextureOpt"
+	# V21: callback resolves index → id, same reason as _on_tool_selected.
+	# When a slot is deleted, the remaining slots keep their original IDs;
+	# passing the raw idx would scramble subsequent paint strokes.
+	texture_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	texture_opt.item_selected.connect(
+		func(idx):
+			if selected_node:
+				selected_node.current_paint_slot = texture_opt.get_item_id(idx)
+				# TKT-018: re-sync the per-slot PBR sliders to the new slot.
+				_refresh_settings_controls()
+	)
+	_paint_slot_row.add_child(texture_opt)
+
+	_object_slot_row = _brush_row(parent, "Obje")
 	object_opt = OptionButton.new()
 	object_opt.name = "ObjectOpt"
 	# V21: same id-not-index resolution as texture_opt above.
+	object_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	object_opt.item_selected.connect(
 		func(idx):
 			if selected_node:
 				selected_node.current_object_slot = object_opt.get_item_id(idx)
 	)
-	object_opt.hide()
-	toolbar.add_child(object_opt)
+	_object_slot_row.add_child(object_opt)
 
-	var shape_label = Label.new()
-	shape_label.text = " Fırça: "
-	toolbar.add_child(shape_label)
-
+	var shape_row := _brush_row(parent, "Şekil")
 	shape_opt = OptionButton.new()
 	shape_opt.add_item("Yumuşak", 0)
 	shape_opt.add_item("Keskin", 1)
 	shape_opt.add_item("Kare", 2)
 	shape_opt.add_item("Elmas", 3)
 	shape_opt.add_item("Gürültü", 4)
+	shape_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	shape_opt.item_selected.connect(_on_shape_selected)
-	toolbar.add_child(shape_opt)
+	shape_row.add_child(shape_opt)
+	# V21: brush-mask picker (popup grid of brushes/*.png) — same row as the
+	# legacy shape dropdown it overrides when a mask is active.
+	brush_mask_picker_btn = Button.new()
+	brush_mask_picker_btn.text = "🖌 Maske"
+	brush_mask_picker_btn.tooltip_text = "Fırça maskesini seç (şekil, gürültü, ring, splotch...)"
+	brush_mask_picker_btn.custom_minimum_size = Vector2(96, 40)
+	brush_mask_picker_btn.pressed.connect(_show_brush_mask_picker)
+	shape_row.add_child(brush_mask_picker_btn)
 
-	var r_label = Label.new()
-	r_label.text = " Çap:"
-	toolbar.add_child(r_label)
-
+	var r_row := _brush_row(parent, "Çap")
 	radius_slider = HSlider.new()
-	# V21: SIZE_EXPAND_FILL with a generous min width. With the toolbar
-	# itself now SIZE_EXPAND_FILL inside an 1100-px scroll, the two
-	# sliders end up sharing whatever horizontal slack is left over from
-	# fixed-width controls (~250-300px each in practice). That's enough
-	# drag resolution that single-step changes feel precise.
-	radius_slider.custom_minimum_size = Vector2(180, 0)
 	radius_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	radius_slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	radius_slider.min_value = 1.0
 	radius_slider.max_value = 50.0
 	radius_slider.step = 1.0
 	radius_slider.value = 8.0
 	radius_slider.value_changed.connect(_on_radius_slider_changed)
-	toolbar.add_child(radius_slider)
-
-	# V21: Numeric input next to the slider. Solves two problems:
-	# (a) on touch screens, dragging a slider to a SPECIFIC value (say,
-	#     12 exactly) is fiddly — the spinbox lets the user type it.
-	# (b) the slider gives no precise readout — users couldn't tell
-	#     whether they were at 8 or 9 without zooming in. Spinbox shows
-	#     the current value as text and updates live as the slider moves.
-	# Two-way bound via _syncing_brush_controls re-entrancy guard.
+	r_row.add_child(radius_slider)
+	# V21: spinbox pair — touch sliders are fiddly for exact values and give
+	# no readout; two-way bound via _syncing_brush_controls.
 	radius_spinbox = SpinBox.new()
 	radius_spinbox.min_value = 1.0
 	radius_spinbox.max_value = 50.0
 	radius_spinbox.step = 1.0
 	radius_spinbox.value = 8.0
-	radius_spinbox.custom_minimum_size = Vector2(80, 0)
+	radius_spinbox.custom_minimum_size = Vector2(76, 0)
 	radius_spinbox.value_changed.connect(_on_radius_spinbox_changed)
-	toolbar.add_child(radius_spinbox)
+	r_row.add_child(radius_spinbox)
 
-	var s_label = Label.new()
-	s_label.text = " Güç:"
-	toolbar.add_child(s_label)
-
+	var s_row := _brush_row(parent, "Güç")
 	strength_slider = HSlider.new()
-	strength_slider.custom_minimum_size = Vector2(180, 0)
 	strength_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	strength_slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	strength_slider.min_value = 0.1
-	# V21 STABILITY FIX: was 5.0. At max=5 with 25Hz rate limit, a
-	# stationary tap added 125 height units per second — the "vertical
-	# columns" the user reported in early screenshots. 2.0 caps a
-	# stationary tap at 50/sec (still aggressive but recoverable with
-	# Smooth) while leaving plenty of headroom above the 0.2 default.
-	# Range now matches the [0.0, 2.0] convention shared by
-	# normal_strength / roughness_multiplier — one mental model for all
-	# brush-style sliders.
+	# V21 STABILITY FIX: max 2.0 (was 5.0) — 25Hz × 5.0 produced the
+	# "vertical columns"; 2.0 caps a stationary tap at ~50 units/sec.
 	strength_slider.max_value = 2.0
 	strength_slider.step = 0.05
 	strength_slider.value = 0.2
 	strength_slider.value_changed.connect(_on_strength_slider_changed)
-	toolbar.add_child(strength_slider)
-
+	s_row.add_child(strength_slider)
 	strength_spinbox = SpinBox.new()
 	strength_spinbox.min_value = 0.1
 	strength_spinbox.max_value = 2.0
 	strength_spinbox.step = 0.05
 	strength_spinbox.value = 0.2
-	strength_spinbox.custom_minimum_size = Vector2(80, 0)
+	strength_spinbox.custom_minimum_size = Vector2(76, 0)
 	strength_spinbox.value_changed.connect(_on_strength_spinbox_changed)
-	toolbar.add_child(strength_spinbox)
-
-	var sep = VSeparator.new()
-	toolbar.add_child(sep)
-
-	# V21: brush-mask picker button. Opens a popup grid of all PNG masks
-	# in addons/mobile_terrain/brushes/ — see _build_brush_mask_picker
-	# and _show_brush_mask_picker. Sits between the brush controls and
-	# the asset-manager button so it lives with the painting controls,
-	# not the asset library.
-	brush_mask_picker_btn = Button.new()
-	brush_mask_picker_btn.text = "🖌 Maske"
-	brush_mask_picker_btn.tooltip_text = "Fırça maskesini seç (şekil, gürültü, ring, splotch...)"
-	brush_mask_picker_btn.pressed.connect(_show_brush_mask_picker)
-	toolbar.add_child(brush_mask_picker_btn)
-
-	var sep2 = VSeparator.new()
-	toolbar.add_child(sep2)
-
-	var btn_mgr = Button.new()
-	btn_mgr.text = "Varlıkları Yönet"
-	var style = StyleBoxFlat.new()
-	style.bg_color = Color(0.2, 0.4, 0.8)
-	btn_mgr.add_theme_stylebox_override("normal", style)
-	btn_mgr.pressed.connect(_toggle_asset_manager)
-	toolbar.add_child(btn_mgr)
-
-	add_control_to_container(EditorPlugin.CONTAINER_SPATIAL_EDITOR_MENU, ui_container)
-
-	# V21: brush-mask popup is built lazily on FIRST press of the toolbar
-	# button. Why not eagerly here in _enter_tree like the asset manager?
-	# Because the editor's filesystem hasn't finished its initial import
-	# pass yet at plugin-load time — calling load("res://addons/mobile_terrain/brushes/foo.png")
-	# in _enter_tree races the importer and prints "Failed loading
-	# resource" errors. By the time the user clicks the 🖌 Maske button,
-	# the filesystem is settled, every PNG has a real .ctex sidecar, and
-	# load() returns a Texture2D cleanly.
+	s_row.add_child(strength_spinbox)
 
 
-func _on_texture_slot_selected(idx: int):
-	if selected_node:
-		selected_node.current_paint_slot = idx
-		# Per-texture detailing: re-sync the PBR sliders to the newly selected
-		# paint slot so each texture shows/edits its own tiling/normal/rough/AO.
-		_refresh_settings_controls()
-
-
-func _on_object_slot_selected(idx: int):
-	if selected_node:
-		# Use the item ID (= asset_meshes index), not the visible row index,
-		# so the correct slot is selected even if items are ever reordered.
-		selected_node.current_object_slot = object_opt.get_item_id(idx)
+# TKT-021: removed _on_texture_slot_selected / _on_object_slot_selected —
+# dead since the dropdowns wired their inline id-resolving lambdas; the
+# stale index-based texture handler would even have routed the WRONG slot
+# if ever reconnected.
 
 
 # V21: BRUSH MASK PICKER
@@ -907,61 +877,23 @@ func _update_brush_visual_properties():
 
 
 func _build_asset_manager_ui():
-	asset_manager_panel = PanelContainer.new()
-	asset_manager_panel.hide()
-	var style = StyleBoxFlat.new()
-	style.bg_color = Color(0.15, 0.15, 0.15, 0.9)
-	style.border_width_left = 2
-	style.border_width_top = 2
-	style.border_width_right = 2
-	style.border_width_bottom = 2
-	style.border_color = Color(0.3, 0.3, 0.3)
-	asset_manager_panel.add_theme_stylebox_override("panel", style)
+	# TKT-021 (ADR-021-2): ONE unified left-edge panel for everything. The
+	# shell (anchors, header, tabbing, per-tab scroll) lives in
+	# editor/ui/terrain_panel.gd; this plugin fills the tab roots and keeps
+	# owning every control + handler (ADR-021-3).
+	asset_manager_panel = TerrainPanel.new()
+	asset_manager_panel.closed.connect(_on_panel_closed)
 
-	var margin = MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 10)
-	margin.add_theme_constant_override("margin_right", 10)
-	margin.add_theme_constant_override("margin_top", 10)
-	margin.add_theme_constant_override("margin_bottom", 10)
-	asset_manager_panel.add_child(margin)
+	# Tab 1 — Fırça: all the controls that used to live in the 1100px
+	# toolbar band.
+	_build_brush_tab(asset_manager_panel.brush_tab_root)
 
-	# TKT-020 F1: the panel is tabbed now — "Varlıklar" keeps the existing
-	# settings + texture/object slots; "Chunk'lar" hosts the editor chunk
-	# visibility board. Tab titles come from the child node names.
-	var tabs := TabContainer.new()
-	margin.add_child(tabs)
-
-	var main_vbox = VBoxContainer.new()
-	main_vbox.name = "Varlıklar"
-	tabs.add_child(main_vbox)
-
-	var title = Label.new()
-	title.text = "Terrain Varlık Yöneticisi"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	main_vbox.add_child(title)
-	main_vbox.add_child(HSeparator.new())
-
-	var scroll = ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	main_vbox.add_child(scroll)
-
-	# TKT-015: settings + asset columns share one scrollable column, so the
-	# advanced sliders sit above the texture/object slots and scroll together.
-	var content_vbox := VBoxContainer.new()
-	content_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(content_vbox)
-
+	# Tab 2 — Varlıklar: advanced settings + texture/object slots. Single
+	# column (TKT-021): the old two-column split left ~150px per picker at
+	# panel width — unusable on touch.
+	var content_vbox: VBoxContainer = asset_manager_panel.assets_tab_root
 	_build_settings_section(content_vbox)
 	content_vbox.add_child(HSeparator.new())
-
-	var hbox = HBoxContainer.new()
-	hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content_vbox.add_child(hbox)
-
-	var tex_vbox = VBoxContainer.new()
-	tex_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	hbox.add_child(tex_vbox)
 
 	var tex_header = HBoxContainer.new()
 	var tex_lbl = Label.new()
@@ -970,19 +902,16 @@ func _build_asset_manager_ui():
 	tex_header.add_child(tex_lbl)
 	var btn_add_tex_local := Button.new()
 	btn_add_tex_local.text = "+"
+	btn_add_tex_local.custom_minimum_size = Vector2(40, 40)
 	btn_add_tex_local.pressed.connect(_add_texture_slot)
 	tex_header.add_child(btn_add_tex_local)
 	btn_add_tex = btn_add_tex_local  # store for cap-disable in _refresh_manager_ui
-	tex_vbox.add_child(tex_header)
+	content_vbox.add_child(tex_header)
 
 	tex_list_vbox = VBoxContainer.new()
-	tex_vbox.add_child(tex_list_vbox)
+	content_vbox.add_child(tex_list_vbox)
 
-	hbox.add_child(VSeparator.new())
-
-	var obj_vbox = VBoxContainer.new()
-	obj_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	hbox.add_child(obj_vbox)
+	content_vbox.add_child(HSeparator.new())
 
 	var obj_header = HBoxContainer.new()
 	var obj_lbl = Label.new()
@@ -991,42 +920,45 @@ func _build_asset_manager_ui():
 	obj_header.add_child(obj_lbl)
 	var btn_add_obj = Button.new()
 	btn_add_obj.text = "+"
+	btn_add_obj.custom_minimum_size = Vector2(40, 40)
 	btn_add_obj.pressed.connect(_add_object_slot)
 	obj_header.add_child(btn_add_obj)
-	obj_vbox.add_child(obj_header)
+	content_vbox.add_child(obj_header)
 
 	obj_list_vbox = VBoxContainer.new()
-	obj_vbox.add_child(obj_list_vbox)
+	content_vbox.add_child(obj_list_vbox)
 
-	# TKT-020 F1: second tab — chunk visibility board. Refreshed on panel
-	# open (_refresh_manager_ui) and whenever the user switches onto the tab
-	# (map_size / chunk_size may have changed while the other tab was up).
+	# Tab 3 — Chunk'lar (TKT-020 F1): chunk visibility board. Refreshed on
+	# panel open (_refresh_manager_ui) and on switching onto the tab
+	# (map_size / chunk_size may have changed while another tab was up).
 	chunk_vis_tab = TerrainChunkVisibilityTab.new()
-	tabs.add_child(chunk_vis_tab)
-	tabs.tab_changed.connect(
+	asset_manager_panel.add_tab_control(chunk_vis_tab)
+	asset_manager_panel.tabs.tab_changed.connect(
 		func(_idx: int) -> void:
 			if (
 				is_instance_valid(chunk_vis_tab)
-				and tabs.get_current_tab_control() == chunk_vis_tab
+				and asset_manager_panel.tabs.get_current_tab_control() == chunk_vis_tab
 			):
 				chunk_vis_tab.refresh(selected_node)
 	)
 
-	# V23 (TKT-002 C7): null-guarded — leave the asset panel unparented if
-	# the main screen isn't available yet. _toggle_asset_manager will
-	# re-parent on first open as a fallback.
+	# V23 (TKT-002 C7): null-guarded — leave the panel unparented if the
+	# main screen isn't available yet. _toggle_asset_manager re-parents on
+	# first open as a fallback.
 	var editor_viewport := _safe_editor_main_screen()
 	if editor_viewport != null:
-		editor_viewport.add_child(asset_manager_panel)
+		asset_manager_panel.attach_to(editor_viewport)
 	else:
 		push_warning(
-			"MobileTerrain3D: editor main screen unavailable; asset manager will reparent on first open (TKT-002 C7)."
+			"MobileTerrain3D: editor main screen unavailable; panel will reparent on first open (TKT-002 C7)."
 		)
-	asset_manager_panel.position = Vector2(12, 52)
-	# Compact + tucked top-left so it does NOT cover the whole viewport — the
-	# user must SEE the terrain react while dragging a setting slider. Smaller
-	# than before (was 560x640); everything scrolls inside this box.
-	asset_manager_panel.custom_minimum_size = Vector2(430, 360)
+
+
+# TKT-021: the panel's ✕ closed it — un-press the strip toggle so the two
+# stay mirrored.
+func _on_panel_closed() -> void:
+	if is_instance_valid(panel_toggle_btn):
+		panel_toggle_btn.set_pressed_no_signal(false)
 
 
 # TKT-015: advanced-settings section — exposes the shader/PBR + object knobs
@@ -1070,9 +1002,12 @@ func _add_setting_slider(
 	parent: Control, label_text: String, prop: String, mn: float, mx: float, step: float
 ) -> void:
 	var row := HBoxContainer.new()
+	# TKT-021: ≥40px row for touch; label trimmed so the slider keeps usable
+	# drag width inside the 340px panel.
+	row.custom_minimum_size = Vector2(0, 40)
 	var lbl := Label.new()
 	lbl.text = label_text
-	lbl.custom_minimum_size = Vector2(130, 0)
+	lbl.custom_minimum_size = Vector2(104, 0)
 	lbl.add_theme_color_override("font_color", Color(0.7, 0.7, 0.75))
 	row.add_child(lbl)
 	var slider := HSlider.new()
@@ -1167,11 +1102,23 @@ func _refresh_settings_controls() -> void:
 
 
 func _toggle_asset_manager():
+	if asset_manager_panel == null:
+		return
+	# TKT-002 C7 fallback: panel built before the main screen existed —
+	# anchor it now on first open.
+	if asset_manager_panel.get_parent() == null:
+		var screen := _safe_editor_main_screen()
+		if screen != null:
+			asset_manager_panel.attach_to(screen)
 	if asset_manager_panel.visible:
 		asset_manager_panel.hide()
 	else:
 		_refresh_manager_ui()
 		asset_manager_panel.show()
+	# TKT-021: keep the strip toggle mirrored whichever path changed
+	# visibility (✕ goes through _on_panel_closed instead).
+	if is_instance_valid(panel_toggle_btn):
+		panel_toggle_btn.set_pressed_no_signal(asset_manager_panel.visible)
 
 
 func _refresh_manager_ui():
@@ -2141,6 +2088,10 @@ func _edit(object: Object) -> void:
 		_update_ui_visibility()
 		_update_shape_dropdown_state()  # V21: in case the loaded scene has brush_mask set
 		_update_brush_visual_properties()
+		# TKT-021: if the unified panel is open, re-target its tabs (assets,
+		# settings, chunk board) at the newly selected terrain.
+		if asset_manager_panel != null and asset_manager_panel.visible:
+			_refresh_manager_ui()
 	else:
 		_detach_brush_cursor()
 
@@ -2178,6 +2129,9 @@ func _make_visible(visible: bool) -> void:
 		_detach_brush_cursor()
 		if asset_manager_panel:
 			asset_manager_panel.hide()
+		# TKT-021: keep the strip toggle mirrored with the now-hidden panel.
+		if is_instance_valid(panel_toggle_btn):
+			panel_toggle_btn.set_pressed_no_signal(false)
 		selected_node = null
 		is_sculpting = false
 		# V21: belt-and-braces: _finalize_active_stroke already cleared
@@ -2283,16 +2237,13 @@ func _select_tool_by_id(id: int) -> void:
 func _update_ui_visibility():
 	if not selected_node or not toolbar:
 		return
-	texture_opt.hide()
-	object_opt.hide()
-	if is_instance_valid(paint_mode_opt):
-		paint_mode_opt.hide()
-	if selected_node.current_tool == 7:  # Paint V19
-		texture_opt.show()
-		if is_instance_valid(paint_mode_opt):
-			paint_mode_opt.show()
-	elif selected_node.current_tool == 8:  # Object V19
-		object_opt.show()
+	# TKT-021: tool-dependent ROWS (label + control) in the Fırça tab.
+	if is_instance_valid(_paint_slot_row):
+		_paint_slot_row.visible = selected_node.current_tool == 7
+	if is_instance_valid(_paint_mode_row):
+		_paint_mode_row.visible = selected_node.current_tool == 7
+	if is_instance_valid(_object_slot_row):
+		_object_slot_row.visible = selected_node.current_tool == 8
 	# TKT-020 F2: in Dolgu mode the blend is falloff-only, so the strength
 	# slider does nothing for paint — disable it (with a tooltip saying why)
 	# instead of letting the user drag a dead control. Every other tool
