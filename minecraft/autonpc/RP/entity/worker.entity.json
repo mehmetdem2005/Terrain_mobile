@@ -1,0 +1,38 @@
+{
+  "format_version": "1.10.0",
+  "minecraft:client_entity": {
+    "description": {
+      "identifier": "autonpc:worker",
+      "materials": {
+        "default": "entity_alphatest"
+      },
+      "textures": {
+        "default": "textures/entity/autonpc/worker",
+        "v1": "textures/entity/autonpc/worker1",
+        "v2": "textures/entity/autonpc/worker2",
+        "v3": "textures/entity/autonpc/worker3"
+      },
+      "geometry": {
+        "default": "geometry.autonpc.worker"
+      },
+      "render_controllers": [
+        "controller.render.autonpc.worker"
+      ],
+      "animations": {
+        "walk": "animation.autonpc.worker.walk",
+        "idle": "animation.autonpc.worker.idle",
+        "controller": "controller.animation.autonpc.worker",
+        "swing": "animation.autonpc.worker.swing"
+      },
+      "scripts": {
+        "animate": [
+          "controller"
+        ]
+      },
+      "spawn_egg": {
+        "texture": "spawn_egg",
+        "texture_index": 1
+      }
+    }
+  }
+}

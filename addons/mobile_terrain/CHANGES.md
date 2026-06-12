@@ -1,3 +1,25 @@
+# MobileTerrain3D — Changelog
+
+## 22.3.0 (2026-06-12) — KONSOLİDASYON: tüm dallar main'de
+
+Üç paralel geliştirme hattı tek `main` dalında birleştirildi:
+- `claude/brave-sagan-75a4cj`: V22.1 (TKT-019) + V22.2 (TKT-020) — aşağıda.
+- `claude/serene-planck-kNUzu` ucu: **dikişsiz Varyasyon/Rotasyon shader'ı**
+  (sürekli domain warp + 2×2 cell texture-bombing; uniform isimleri aynı,
+  slider'lar değişmeden çalışır) + `render_advsettings.gd` görsel testi.
+  Not: bu, TKT-019'un DEF-005 kaydındaki endişeyi de büyük ölçüde kapatır
+  (per-cell TON artık yalnız albedo'ya uygulanır).
+- `claude/autonpc-addon`: TKT-010 doğruluk+performans paketi (22.1.0 —
+  aşağıda), fare rig asset'leri (`assets/mouse/`), Minecraft AutoNPC addon'u
+  (`minecraft/`), kurumsal standartlar (`docs/`, `.claude/skills/`).
+
+Çakışma çözümleri: `place_one` buffer-splice iki dalda bağımsız aynı çözümle
+yazılmıştı (TKT-019 M1 ≡ TKT-010 B3) — tek kopya kaldı; `_make_visible(false)`
+hem `placement_initial_counts.clear()` (A4) hem `_cached_camera = null` (M5)
+içerir. Sürümleme bundan sonra SemVer (22.0.0 girdisine bak).
+
+---
+
 # MobileTerrain3D V22.2 — Chunk Görünürlük + Boyama Modları (TKT-020)
 
 ## F1 — Editör chunk görünürlüğü ("Chunk'lar" sekmesi)
@@ -48,6 +70,49 @@ Tam kaynak audit + doğrulanmış hata düzeltmeleri. Tüm API iddiaları yerel 
 
 - `rotation_jitter` normal map UV'lerini döndürürken normal vektörünü karşı-döndürmüyor (jitter > 0'da ince ışık kayması) — görsel doğrulama rig'i gerektirir.
 - Editor sahne-açılışında çift `initialize_terrain` (cascade + deferred) — sınırlı maliyet, lifecycle yeniden tasarımı ister.
+
+---
+
+## 22.1.0 (2026-06-10) — TKT-010 denetim onarımları
+
+### Düzeltildi
+- **Eşya yerleştirme (S1, veri kaybı):** path'siz mesh'ler (BoxMesh vb.) .tscn
+  ve .res'e ayrı kopya gömüldüğünden reload sonrası registry çatallanıyor,
+  GC yüklenen yerleştirmeleri siliyordu. Restore artık .res kopyasını
+  asset_meshes'teki .tscn kopyasıyla yeniden birleştiriyor
+  (`_resolve_restored_mesh`, slot indeksi kaydı, GC path-toleransı).
+  Regresyon: `test_object_identity.gd` (eski kodda 3 failure ile doğrulandı).
+- Boş "Terrain Place Objects" undo aksiyonu (hayalet Ctrl+Z slotu) artık
+  oluşmuyor; küçülmüş multimesh için bozucu restore kaydedilmiyor
+  (undo_recorder A2/A3 + 2 yeni test).
+- Texture slotu silinince kalan slotların tiling/normal/roughness/AO
+  değerlerinin kayması (4 skaler PBR dizisi silmede atlanıyordu).
+- Plugin kapatılırken aktif stroke finalize edilmiyor, undo aksiyonu askıda
+  kalıyordu; `_finalize_active_stroke` freed-node'a karşı da korumalı.
+- `_make_visible(false)` placement_initial_counts'u da temizliyor.
+
+### Performans (5 × P1)
+- Smooth/erode: dab başına 6.5 MB tam-harita kopyası → footprint-yerel tampon.
+- Paint: dab başına tam splatmap GPU upload'u → 0.1s birleştirme + stroke
+  sonu flush (163 MB/s → ~10 Hz).
+- place_one: O(n²) RS transform kopyası → tek buffer oku/yaz.
+- Fırça imleci: motion başına ~2.5K çağrı → 30 Hz rate-cap.
+- Undo + editör LOD çifte tam-rebuild dalgası → backlog > 128 iken LOD atlar.
+
+## 22.0.0 (2026-06-10)
+
+### Değişti
+- Sürümleme SemVer 2.0.0 formatına geçti: `22.0` → `22.0.0` (davranış
+  değişikliği yok; bundan sonra sahne formatını kıran değişiklik = MAJOR,
+  geriye uyumlu özellik = MINOR, bug fix = PATCH).
+
+### Eklendi (geliştirme altyapısı, eklenti davranışı aynı)
+- Kurumsal standart yönetişimi: `docs/STANDARDS.md` (40 standart, projeye
+  uyarlanmış) + 7 skill (`.claude/skills/`) + `scripts/validate_skills.sh`
+  (skill yapı sözleşmesi denetçisi) + `scripts/release_build.sh` (SLSA L1
+  provenanslı release build: zip + SHA256SUMS + provenance.json + SBOM).
+- Ajan yetki matrisi: `docs/AGENT_AUTHORITY.md` (108 ajan, R1-R4 risk sınıfı,
+  5/5 yönetişim kontrolü temiz).
 
 ---
 

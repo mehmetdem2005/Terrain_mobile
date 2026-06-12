@@ -17,13 +17,17 @@ extends RefCounted
 #       [extra params]
 #   ) -> PackedFloat32Array | void
 #
-# In-place ops (modify, flatten, noise, terrace) return nothing; they
-# mutate `height_data` directly.
+# ALL ops mutate `height_data` in place (packed arrays are passed by
+# reference in Godot 4).
 #
-# Snapshot-and-swap ops (smooth, erode) return a NEW PackedFloat32Array
-# that the caller must assign back to its height_data. The snapshot is
-# necessary because neighbour reads inside the loop would otherwise see
-# already-mutated cells and produce direction-biased results.
+# Neighbour-reading ops (smooth, erode) must not see already-mutated cells
+# inside the same dab, or the result is direction-biased. TKT-010 B1: this
+# used to be done by duplicating the ENTIRE heightmap per dab (6.5 MB at
+# 1280², ~162 MB/s of copies at the 25 Hz dab rate — the "COW makes it
+# cheap" comment was wrong: duplicate() on a packed array is always an
+# eager full copy). Now the writes are buffered in footprint-sized locals
+# during the pass and applied afterwards: same order-independence, ~40 KB
+# instead of 6.5 MB per dab.
 
 
 static func modify_height(
@@ -78,11 +82,12 @@ static func smooth_height(
 	cz: float,
 	radius: float,
 	strength: float
-) -> PackedFloat32Array:
-	# Copy-on-write means the duplicate is cheap (256 KB max). Writes
-	# go to the duplicate; reads stay against `height_data` so neighbour
-	# averaging is order-independent.
-	var temp: PackedFloat32Array = height_data.duplicate()
+) -> void:
+	# Buffered writes: reads stay against the untouched `height_data` during
+	# the pass so neighbour averaging is order-independent; each footprint
+	# cell is written exactly once, applied after the pass.
+	var w_idx := PackedInt32Array()
+	var w_val := PackedFloat32Array()
 	brush.iterate_footprint(
 		cx,
 		cz,
@@ -95,10 +100,12 @@ static func smooth_height(
 				for nx in range(max(0, x - 1), min(map_size, x + 2)):
 					avg += height_data[nz * map_size + nx]
 					c += 1
-			temp[idx] = lerpf(height_data[idx], avg / float(c), strength * f * 0.5)
+			w_idx.append(idx)
+			w_val.append(lerpf(height_data[idx], avg / float(c), strength * f * 0.5))
 			mark_dirty.call(x, z)
 	)
-	return temp
+	for i in range(w_idx.size()):
+		height_data[w_idx[i]] = w_val[i]
 
 
 static func noise_height(
@@ -160,11 +167,13 @@ static func erode_height(
 	cz: float,
 	radius: float,
 	strength: float
-) -> PackedFloat32Array:
+) -> void:
 	# Thermal erosion: each cell donates a slice of its height to its
 	# lowest 8-neighbour. Source AND destination chunks get marked
 	# dirty so cross-boundary transfers don't leave stale seams.
-	var temp: PackedFloat32Array = height_data.duplicate()
+	# Transfers accumulate as deltas (several cells can feed the same
+	# lowest neighbour) and are applied after the pass.
+	var deltas: Dictionary = {}
 	var erosion_rate: float = strength * 0.1
 	brush.iterate_footprint(
 		cx,
@@ -186,8 +195,8 @@ static func erode_height(
 				return
 			var diff: float = h - lowest_h
 			var amount: float = minf(diff * 0.5, erosion_rate) * f
-			temp[idx] -= amount
-			temp[lowest_idx] += amount
+			deltas[idx] = deltas.get(idx, 0.0) - amount
+			deltas[lowest_idx] = deltas.get(lowest_idx, 0.0) + amount
 			mark_dirty.call(x, z)
 			# V22 Phase 4 (audit-brush-erode-bounds): lowest_idx is by
 			# construction within (nz * map_size + nx) where nz/nx came from
@@ -197,4 +206,5 @@ static func erode_height(
 			var dest_x: int = lowest_idx % map_size
 			mark_dirty.call(dest_x, dest_z)
 	)
-	return temp
+	for k in deltas:
+		height_data[k] += deltas[k]

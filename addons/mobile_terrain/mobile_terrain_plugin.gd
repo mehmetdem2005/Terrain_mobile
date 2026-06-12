@@ -203,6 +203,9 @@ func _create_brush_cursor() -> void:
 # cursor geometry without the user having to move their finger first.
 # Vector3.INF = "no hit yet, cursor isn't visible".
 var _last_brush_hit: Vector3 = Vector3.INF
+# TKT-010 B4: last decal-mesh rebuild timestamp; rebuilds are rate-capped to
+# TerrainConstants.CURSOR_CONFORM_INTERVAL_MSEC in _conform_brush_to_surface.
+var _cursor_conform_last_msec: int = 0
 
 
 func _attach_brush_cursor_to(target: Node) -> void:
@@ -1421,6 +1424,18 @@ func _remove_texture_slot(idx: int):
 		selected_node.terrain_metallic.remove_at(idx)
 	if idx < selected_node.terrain_emission.size():
 		selected_node.terrain_emission.remove_at(idx)
+	# TKT-010 C1: the four per-slot SCALAR arrays were missing from this
+	# removal. _sync_pbr_array_sizes then truncated them from the END, so
+	# deleting a middle slot shifted every surviving slot's tiling/normal/
+	# roughness/AO multipliers onto the wrong slot.
+	if idx < selected_node.texture_scale.size():
+		selected_node.texture_scale.remove_at(idx)
+	if idx < selected_node.normal_strength.size():
+		selected_node.normal_strength.remove_at(idx)
+	if idx < selected_node.roughness_multiplier.size():
+		selected_node.roughness_multiplier.remove_at(idx)
+	if idx < selected_node.ao_strength.size():
+		selected_node.ao_strength.remove_at(idx)
 	# V20 FIX (bug U3): rebind shader uniforms after the arrays shrink
 	# so the removed slot's old textures stop rendering. update_shader_textures
 	# rebinds all four map types per slot via the blank-texture fallback.
@@ -1925,6 +1940,13 @@ func _apply_brush_toggle_style() -> void:
 
 func _exit_tree() -> void:
 	remove_custom_type("MobileTerrain3D")
+	# TKT-010 C2: commit any in-progress stroke BEFORE teardown. Disabling
+	# the plugin mid-stroke used to leave the node-side stroke open
+	# (start_stroke without end_stroke) and the partial work uncommitted —
+	# the next create_action then stomped the half-built state.
+	if is_sculpting and selected_node != null and is_instance_valid(selected_node):
+		_finalize_active_stroke()
+	is_sculpting = false
 	# V20 FIX: defensive disconnect in case the plugin is being torn down
 	# while a terrain was still selected.
 	_disconnect_placement_signal(selected_node)
@@ -2164,6 +2186,10 @@ func _make_visible(visible: bool) -> void:
 		splatmap_backup = PackedByteArray()
 		heightmap_backup = PackedFloat32Array()
 		placement_records.clear()
+		# TKT-010 A4: the belt-and-braces argument applies to the counts
+		# dictionary exactly as much as to the records array — the old code
+		# wiped one and not the other.
+		placement_initial_counts.clear()
 		# TKT-019 M5: the declaration comment always promised this clear
 		# ("cleared on _make_visible(false)") but it was never done — the
 		# is_instance_valid guards downstream masked it. Honour the contract
@@ -2206,7 +2232,10 @@ func _on_tool_selected(idx: int):
 # stroke. Commits the right undo action for whatever tool is currently
 # active and clears the corresponding backup.
 func _finalize_active_stroke() -> void:
-	if selected_node == null:
+	# TKT-010 C3: also reject a FREED node, not just null. The terrain can
+	# be deleted in the same frame the plugin tears down / the tab changes;
+	# a freed-but-non-null reference crashed on the property access below.
+	if selected_node == null or not is_instance_valid(selected_node):
 		return
 	selected_node.end_stroke()
 	# Phase B.2: undo action construction lives in editor/undo_recorder.gd.
@@ -2330,6 +2359,16 @@ func _conform_brush_to_surface(hit_point: Vector3):
 		return
 	_last_brush_hit = hit_point
 	brush_cursor.show()
+	# TKT-010 B4: rate-cap the mesh rebuild below (the bookkeeping above
+	# stays per-event so hit caching and visibility are never stale). Motion
+	# events arrive at OS rate (200+ Hz on touch); rebuilding 400 height
+	# samples + ~2.2k ImmediateMesh vertices per event starved mobile GPUs.
+	# Worst case after the LAST event of a gesture the decal lags one
+	# interval (~33 ms) — imperceptible against the 40 ms dab cadence.
+	var now_msec: int = Time.get_ticks_msec()
+	if now_msec - _cursor_conform_last_msec < TerrainConstants.CURSOR_CONFORM_INTERVAL_MSEC:
+		return
+	_cursor_conform_last_msec = now_msec
 	# Note: do NOT call _update_brush_visual_properties() here — it now
 	# calls back into this function (so slider drags repaint), which
 	# would create infinite recursion. All visual-property work

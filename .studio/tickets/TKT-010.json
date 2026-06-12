@@ -1,0 +1,47 @@
+{
+  "id": "TKT-010",
+  "title": "Full plugin audit: correctness + performance; object placement reported broken",
+  "kind": "audit",
+  "size": "XL",
+  "mode": "Standard",
+  "godot": "4.6.2",
+  "platform": "mobile (Mobile renderer)",
+  "reporter": "owner (mehmetdem2005)",
+  "symptom": "User reports: plugin is unoptimized, many errors, object placement broken. Self-made changes ('kafama göre yaptım') suspected as cause.",
+  "acceptance": [
+    "Prioritized findings list with file:line evidence for every claim",
+    "Object placement flow audited end-to-end (input -> raymarch -> placement -> persistence -> undo)",
+    "Performance audit of hot paths against TerrainConstants budgets",
+    "Parse check + test pipeline run if Godot install succeeds",
+    "No unverified API claims (Honesty gate)"
+  ],
+  "active_roles": [
+    "Producer",
+    "Tech Director",
+    "Bug Hunter Lead",
+    "Defect Pattern Specialist",
+    "State Corruption Specialist",
+    "Lead Performance Engineer",
+    "Mobile Performance Specialist",
+    "Allocation Auditor",
+    "Crash Auditor",
+    "Reproduction Engineer",
+    "UndoRedo Specialist",
+    "Honesty Auditor",
+    "Quality Gate Officer",
+    "Audit Trail Officer"
+  ],
+  "state": "FIXES_APPLIED",
+  "opened": "2026-06-10",
+  "findings": {
+    "S1": 1,
+    "S2": 2,
+    "S3": 8,
+    "S4": 5,
+    "P1": 5,
+    "P2": 7,
+    "P3": 8
+  },
+  "evidence": "test/run_all.sh 15/15 ALL TESTS PASSED on real Godot 4.6.2; report: .studio/tickets/TKT-010/audit-report.md",
+  "fixes": "S1/A1 + A2-A4 + C1-C3 + P1 B1-B5 applied; 22.1.0; run_all 18 checks ALL TESTS PASSED; P2/P3 + C5 catalog cleanup deferred to next session"
+}

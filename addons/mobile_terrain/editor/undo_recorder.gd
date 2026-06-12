@@ -67,7 +67,14 @@ static func commit_placement_undo(
 ) -> bool:
 	if placement_records.is_empty():
 		return false
-	undo_redo.create_action("Terrain Place Objects")
+
+	# TKT-010 A2: gather the restore ops FIRST. The old flow opened the
+	# action unconditionally; when every touched multimesh was freed
+	# mid-stroke (asset slot deleted during a drag) the loop skipped them
+	# all and commit_action created an EMPTY "Terrain Place Objects" entry —
+	# a phantom undo slot that ate one Ctrl+Z and pushed real history out
+	# of reach.
+	var ops: Array = []
 
 	# One restore op per touched multimesh. Skip any freed since the stroke
 	# (e.g. asset slot removed mid-stroke) — a freed reference would crash on
@@ -78,15 +85,28 @@ static func commit_placement_undo(
 		var mm: MultiMesh = mmi.multimesh
 		var initial: int = placement_initial_counts[mmi]
 		var after_count: int = mm.instance_count
-		if after_count == initial:
+		# TKT-010 A3: `<=` (was `==`). Placement strokes only GROW a
+		# multimesh; after_count < initial means it shrank through an
+		# external path mid-stroke and the pre-stroke transforms are no
+		# longer recoverable from the live buffer (the old slice of an
+		# empty after_buffer produced an empty before_buffer, so undo
+		# collapsed `initial` instances onto the origin). Skipping records
+		# nothing rather than recording a corrupting restore.
+		if after_count <= initial:
 			continue
 		var after_buffer: PackedFloat32Array = mm.buffer.duplicate()
 		# Per-instance stride (12 floats for TRANSFORM_3D); derive it from the
 		# live buffer so 2D/3D both work without a hard-coded constant.
-		var stride: int = after_buffer.size() / after_count if after_count > 0 else 0
+		var stride: int = after_buffer.size() / after_count
 		var before_buffer: PackedFloat32Array = after_buffer.slice(0, initial * stride)
-		undo_redo.add_do_method(node, "_apply_object_buffer", mm, after_count, after_buffer)
-		undo_redo.add_undo_method(node, "_apply_object_buffer", mm, initial, before_buffer)
+		ops.append([mm, after_count, after_buffer, initial, before_buffer])
 
+	if ops.is_empty():
+		return false
+
+	undo_redo.create_action("Terrain Place Objects")
+	for op in ops:
+		undo_redo.add_do_method(node, "_apply_object_buffer", op[0], op[1], op[2])
+		undo_redo.add_undo_method(node, "_apply_object_buffer", op[0], op[3], op[4])
 	undo_redo.commit_action(false)
 	return true

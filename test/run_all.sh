@@ -63,6 +63,10 @@ echo "==> object placement unit test (transform + spacing logic)"
 godot --headless --script unit_tests/test_object_placement.gd 2>&1 | tee /tmp/object_placement.log
 grep -q "^OBJECT_PLACEMENT_TEST_OK" /tmp/object_placement.log
 
+echo "==> object identity unit test (TKT-010 A1: mesh re-unification across reload)"
+godot --headless --script unit_tests/test_object_identity.gd 2>&1 | tee /tmp/object_identity.log
+grep -q "^OBJECT_IDENTITY_TEST_OK" /tmp/object_identity.log
+
 echo "==> input router unit test (touch + mouse stroke routing)"
 godot --headless --script unit_tests/test_input_router.gd 2>&1 | tee /tmp/input_router.log
 grep -q "^INPUT_ROUTER_TEST_OK" /tmp/input_router.log

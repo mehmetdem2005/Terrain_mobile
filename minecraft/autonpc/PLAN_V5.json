@@ -1,0 +1,56 @@
+{
+  "project": "AutoNPC PlayerAI v5.0 — 'gerçek oyuncu' genişlemesi",
+  "base": "v4.0 (kalıcı state, A*, RealWork) üzerine inşa",
+  "user_requests_mapped": [
+    {"req": "Bloğu gerçek oyuncu gibi kırsın (animasyon+süre+drop)", "mod": "work/breaker.js (v4'te var) + kırma partikül yoğunlaştırma", "feasible": "TAM (vanilla çatlak overlay'i custom entity'ye Bedrock vermiyor — partikül+swing ile)"},
+    {"req": "Gerçek silah/ekipman hasarı ve koruması", "mod": "combat/gear.js: kılıç hasar tablosu (vanilla değerler), zırh puanı → hasar azaltımı entityHurt telafisiyle", "feasible": "TAM (simülasyon: applyDamage + zırh mitigasyonu)"},
+    {"req": "Engelde takılmasın: kırsın", "mod": "v4 jobs/job.js approachOrTunnel (var) + locomotion blocked->tunnel entegrasyonu güçlendirme", "feasible": "TAM"},
+    {"req": "Uçurumdan düşmesin", "mod": "v4 nav/grid.js MAX_FALL=3 (var)", "feasible": "TAM"},
+    {"req": "Blok içinden geçmesin", "mod": "A* yalnız geçilebilir hücreler; ara-nokta adımı hücre merkezli (var)", "feasible": "TAM"},
+    {"req": "Zırh+kılıç+kalkan yapsın, kuşansın", "mod": "combat/gear.js: craft zinciri (deri/demir/elmas/netherite zırh, kılıç, kalkan) + equippable slotlara giydirme", "feasible": "TAM"},
+    {"req": "Kalkanı efektif kullansın; creeper patlarken kalkan", "mod": "combat/threats.js: hostil tarama, creeper yakınsa kalkan offhand + blok penceresi (hasar telafisi), patlama sonrası normale dön", "feasible": "SIM (gerçek blocking mekaniği entity'ye yok; hasar-penceresi simülasyonu)"},
+    {"req": "Ok+yay yapsın ve kullansın", "mod": "combat/attack.js: yay craft, uzak hedefe minecraft:arrow spawn + hız vektörü, yakına kılıç", "feasible": "TAM (projectile gerçek)"},
+    {"req": "İnek/lama/at öldürüp eşya toplasın; neye ihtiyacı varsa", "mod": "jobs/hunt.js: hedef tür listesi, yaklaş-vur (gerçek loot düşer), drop toplama v4 drops.js", "feasible": "TAM"},
+    {"req": "Suda yüzsün, balık avlasın", "mod": "nav/grid.js yüzme hücreleri (su sütunu maliyetli geçilebilir) + jobs/fish.js: su kıyısı bul, olta salla (gerçek olta item), bekleme+yakalama tablosu", "feasible": "TAM hareket / SIM balık (bobber AI'sı entity'ye bağlanamaz; zaman+loot tablosu)"},
+    {"req": "Büyü masası yapsın", "mod": "jobs/build_house.js genişleme: enchant table craft (4 obsidyen+2 elmas+kitap) + eve yerleştir", "feasible": "TAM"},
+    {"req": "Gerçek mükemmel ev: çatı, kapı, sandıklar, yatak, fırın", "mod": "jobs/build_house.js v2: katmanlı plan (zemin/duvar/kapı boşluğu/çatı üçgen), iç eşya: sandık x2 + craft masası + fırın + yatak; fazla eşyayı sandığa GERÇEK container API ile koyar", "feasible": "TAM"},
+    {"req": "Hologramla alan seç → düzleştir + creeper çukuru doldur", "mod": "sys/selection.js: değnek (stick) ile 2 köşe işaretle (playerInteractWithBlock), partikül çerçeve hologram; jobs/flatten.js: seçimde üst blokları kaz (drop'lu), çukurları envanter toprağıyla doldur", "feasible": "TAM"},
+    {"req": "Hazine arasın, toplayıp gelsin", "mod": "jobs/treasure.js: yüklü chunk'larda sandık tara, sandığa yürü, container'ı GERÇEK API ile boşalt, base'e dön", "feasible": "TAM yakın-mesafe (yapı /locate çıktısı script'e kapalı — dürüst sınır)"},
+    {"req": "Zikzak merdiven maden + meşale", "mod": "jobs/mine_ore.js: yön her N adımda 90° döner (zikzak), her 6 blokta meşale koyar", "feasible": "TAM"},
+    {"req": "Oto mod: yatak+nether portal+netherite zırh; yatakları uzağa koyup patlat", "mod": "jobs/nether_quest.js: obsidyen topla→çerçeve ör→çakmak→nether'e GEÇ (dimension teleport)→ancient_debris tara; yoksa yatağı 8+ blok öteye koy→createExplosion (gerçek patlama)→debris topla→scrap+ingot+netherite kılıç/zırh upgrade; auto/director.js ilerleme zinciri", "feasible": "TAM-SIM karışık (portal geçişi teleport; yatak patlaması createExplosion ile gerçek)"},
+    {"req": "Bizimle sohbet etsin", "mod": "chat/talk.js: 'npc konuş ...' + NPC'ye yakın serbest chat'e kural-tabanlı TR cevap (durum/görev/envanter farkındalıklı)", "feasible": "TAM (kural tabanlı; LLM yok)"},
+    {"req": "Saldırı/kırma animasyonları", "mod": "RP animasyon seti genişleme: attack(swing reuse)+bow_draw pozu; her aksiyonda playAnimation", "feasible": "TAM (custom rig)"}
+  ],
+  "new_modules": [
+    "core/recipes.js — craft tarifleri tek tablo (alet+silah+zırh+kalkan+yatak+sandık+fırın+büyü masası+obsidyen kovası yok: obsidyen=elmas kazmayla kaz)",
+    "combat/gear.js — silah hasar/zırh puan tabloları, craft+kuşan, en-iyi-set seçimi",
+    "combat/threats.js — hostil radar (16b), creeper füze izleme, kalkan penceresi, kaçınma",
+    "combat/attack.js — melee vuruş (cooldown+animasyon+applyDamage), yay atışı (arrow spawn+balistik)",
+    "sys/selection.js — değnekle köşe seçimi + partikül hologram çerçeve (5sn'de bir çizilir)",
+    "jobs/hunt.js — hayvan avı (tür filtresi, drop toplama)",
+    "jobs/fish.js — balıkçılık (su bul, olta, bekle, loot tablosu)",
+    "jobs/flatten.js — seçili alanı hedef yüksekliğe düzleştir + çukur doldur",
+    "jobs/treasure.js — sandık avı + yağma + base'e dönüş",
+    "jobs/nether_quest.js — portal inşası, nether geçişi, yatak-patlatmalı debris madenciliği, netherite üretim",
+    "auto/director.js — oto ilerleme: odun→alet→taş→demir→zırh+kılıç+kalkan→ev(sandık+yatak)→elmas→büyü masası→obsidyen→portal→netherite",
+    "chat/talk.js — kural tabanlı sohbet"
+  ],
+  "v4_module_upgrades": [
+    "nav/grid.js: yüzme (su hücreleri cost 2.2, yüzeyde kafa hava şartı)",
+    "jobs/mine_ore.js: zikzak yön + meşale yerleştirme",
+    "jobs/build_house.js: v2 ev planı (çatı üçgeni, kapı, iç eşya, sandığa eşya bırakma)",
+    "sys/tick.js: threats.tick entegrasyonu (görevden önce hayatta kalma refleksi)",
+    "sys/events.js: selection wand + sohbet yakalama + entityHurt zırh mitigasyonu",
+    "core/state.js: equipment {head,chest,legs,feet,offhand}, needs sayaçları",
+    "chat/commands.js: yeni komutlar (avla, balık, düzleştir, hazine, nether, doldur, konuş)",
+    "ui/panels.js: yeni görev butonları"
+  ],
+  "honest_limits": [
+    "Vanilla kırma-çatlak overlay'i ve gerçek oyuncu animasyon rig'i custom entity'ye Bedrock tarafından verilmiyor — kendi swing/walk/attack animasyonlarımız + partikül kullanılır",
+    "Kalkan 'blocking' mekaniği entity'lere kapalı — kalkan penceresinde hasar telafi simülasyonu",
+    "/locate çıktısı Script API'ye kapalı — hazine = yüklü chunk'lardaki sandıklar",
+    "Balık tutma bobber'ı NPC'ye bağlanamaz — süre+loot tablosu simülasyonu",
+    "Nether portal bloğu geçiş ışınlaması entity için tetiklenmez — portal İNŞA edilir, geçiş dimension-teleport ile yapılır (görsel olarak portala yürür)"
+  ],
+  "steps": ["1. core/recipes + state/registry genişlet", "2. combat üçlüsü", "3. selection + flatten + treasure + hunt + fish", "4. nether_quest + director", "5. mine_ore zikzak + house v2 + grid yüzme", "6. events/tick/commands/panels/talk entegre", "7. validate+build+test", "8. commit+push+gönder"]
+}

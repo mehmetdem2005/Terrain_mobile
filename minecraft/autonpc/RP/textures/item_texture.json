@@ -1,0 +1,9 @@
+{
+  "resource_pack_name": "AutoNPC PlayerAI v4.0 RP",
+  "texture_name": "atlas.items",
+  "texture_data": {
+    "autonpc_guide_book": {
+      "textures": "textures/items/autonpc_guide_book"
+    }
+  }
+}

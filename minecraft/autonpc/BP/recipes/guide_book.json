@@ -1,0 +1,13 @@
+{
+  "format_version": "1.21.70",
+  "minecraft:recipe_shaped": {
+    "description": { "identifier": "autonpc:guide_book_recipe" },
+    "tags": ["crafting_table"],
+    "pattern": ["SD", "DS"],
+    "key": {
+      "S": { "item": "minecraft:stone" },
+      "D": { "item": "minecraft:dirt" }
+    },
+    "result": { "item": "autonpc:guide_book", "count": 1 }
+  }
+}

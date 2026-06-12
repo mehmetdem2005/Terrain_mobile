@@ -1,5 +1,15 @@
 # Project instructions for Claude Code
 
+## Standartlar bilgi tabanı
+
+Kurumsal standartlar referansı `docs/STANDARDS.md` dosyasındadır (TOGAF/yaşam
+döngüsü, eklenti/SDK, oyun geliştirme, AI-ajan standartları — her biri projeye
+uyarlanmış). Standartlar **çalıştırılabilir skill'lere** derlidir
+(`.claude/skills/`): extract-system, quality-gate, release-engineering,
+incident-response, agent-governance, mobile-compliance, standards-audit.
+İlgili iş türünde önce eşleşen skill'i uygula; skill yapısını değiştirirsen
+`scripts/validate_skills.sh` yeşil kalmalı. Boşluk tablosunu güncel tut.
+
 ## PR auto-merge policy
 
 The repo owner (mehmetdem2005) has granted standing authorization: after

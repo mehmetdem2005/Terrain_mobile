@@ -70,10 +70,11 @@ func _test_smooth() -> String:
 	# Spike at centre, smooth pass should reduce it.
 	var h := _flat_terrain(0.0)
 	h[8 * MAP_SIZE + 8] = 10.0
-	var brush := _make_brush()
-	var smoothed := SculptOps.smooth_height(brush, h, MAP_SIZE, _no_op_mark, 8.0, 8.0, 3.0, 1.0)
 	var centre_before: float = h[8 * MAP_SIZE + 8]
-	var centre_after: float = smoothed[8 * MAP_SIZE + 8]
+	var brush := _make_brush()
+	# TKT-010 B1: smooth_height mutates h in place now (no returned copy).
+	SculptOps.smooth_height(brush, h, MAP_SIZE, _no_op_mark, 8.0, 8.0, 3.0, 1.0)
+	var centre_after: float = h[8 * MAP_SIZE + 8]
 	if centre_after >= centre_before:
 		return "smooth should reduce spike: before=%f after=%f" % [centre_before, centre_after]
 	return ""
@@ -115,11 +116,12 @@ func _test_erode() -> String:
 	h[8 * MAP_SIZE + 8] = 10.0       # centre high
 	h[8 * MAP_SIZE + 9] = 2.0        # east low
 	var brush := _make_brush()
-	var eroded := SculptOps.erode_height(brush, h, MAP_SIZE, _no_op_mark, 8.0, 8.0, 1.5, 2.0)
-	if eroded[8 * MAP_SIZE + 8] >= 10.0:
-		return "centre should have lost mass, still %f" % eroded[8 * MAP_SIZE + 8]
-	if eroded[8 * MAP_SIZE + 9] <= 2.0:
-		return "east neighbour should have gained mass, still %f" % eroded[8 * MAP_SIZE + 9]
+	# TKT-010 B1: erode_height mutates h in place now (no returned copy).
+	SculptOps.erode_height(brush, h, MAP_SIZE, _no_op_mark, 8.0, 8.0, 1.5, 2.0)
+	if h[8 * MAP_SIZE + 8] >= 10.0:
+		return "centre should have lost mass, still %f" % h[8 * MAP_SIZE + 8]
+	if h[8 * MAP_SIZE + 9] <= 2.0:
+		return "east neighbour should have gained mass, still %f" % h[8 * MAP_SIZE + 9]
 	return ""
 
 func _test_erode_dual_dirty() -> String:

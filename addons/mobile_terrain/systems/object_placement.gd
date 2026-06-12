@@ -143,13 +143,14 @@ static func place_one(
 	# be restored after the grow. Without that, every placement reset all
 	# previously placed objects to the origin.
 	#
-	# TKT-019 M1: restore via a raw `buffer` splice — snapshot the packed
-	# float buffer, grow, zero-extend the snapshot to the new size, assign
-	# it back. Two native property accesses + a memcpy-backed resize,
-	# instead of the old per-instance get/set_instance_transform loop that
-	# made each placement cost O(existing instances) native calls (long
-	# strokes stuttered as the count climbed). The new slot is zeroed by
-	# the resize and immediately overwritten below.
+	# TKT-019 M1 (independently converged with TKT-010 B3): restore via a
+	# raw `buffer` splice — snapshot the packed float buffer, grow,
+	# zero-extend the snapshot to the new size, assign it back. Two native
+	# property accesses + a memcpy-backed resize, instead of the old
+	# per-instance get/set_instance_transform loop that cost O(existing
+	# instances) native calls per placement (~16ms stalls near the 8192
+	# cap). The new slot is zeroed by the resize and immediately
+	# overwritten below.
 	#
 	# Headless builds: the dummy RenderingServer reports an EMPTY buffer
 	# (verified on 4.6.2), so the splice is skipped there — the same
