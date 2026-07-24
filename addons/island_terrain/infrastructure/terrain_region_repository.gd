@@ -14,6 +14,8 @@ var _budget: Budget
 var _cache: Dictionary = {}
 var _lru: Array[Vector2i] = []
 var _dirty: Dictionary = {}
+var _region_memory_bytes: Dictionary = {}
+var _region_memory_callbacks: Dictionary = {}
 var _cached_bytes: int = 0
 
 
@@ -72,6 +74,7 @@ func save_dirty(max_regions: int = 1) -> int:
 			_dirty.erase(coord)
 			continue
 		var region: RegionData = _cache[coord] as RegionData
+		_refresh_region_memory_accounting(coord, region)
 		var error: Error = _save_region(coord, region)
 		if error == OK:
 			_dirty.erase(coord)
@@ -227,6 +230,11 @@ func _admit(coord: Vector2i, region: RegionData) -> void:
 	_make_room(bytes)
 	_cache[coord] = region
 	_lru.append(coord)
+	_region_memory_bytes[coord] = bytes
+	var callback := _on_region_memory_size_changed.bind(coord)
+	_region_memory_callbacks[coord] = callback
+	if not region.memory_size_changed.is_connected(callback):
+		region.memory_size_changed.connect(callback)
 	_cached_bytes += bytes
 
 
@@ -239,14 +247,25 @@ func _make_room(incoming_bytes: int) -> void:
 		guard -= 1
 		var candidate: Vector2i = _find_oldest_clean_region()
 		if candidate == INVALID_COORD:
-			push_warning("IT-W02: Region cache budget reached but all cached regions are dirty; keeping data to avoid loss")
+			push_warning("IT-W02: Region cache budget reached but no clean region can be evicted; keeping data to avoid loss")
 			break
 		_evict(candidate)
 
 
-func _find_oldest_clean_region() -> Vector2i:
+func _enforce_memory_budget(excluded_coord: Vector2i) -> void:
+	var guard: int = _lru.size() + 1
+	while guard > 0 and not _budget.can_cache_region(0, _cached_bytes):
+		guard -= 1
+		var candidate: Vector2i = _find_oldest_clean_region(excluded_coord)
+		if candidate == INVALID_COORD:
+			push_warning("IT-W07: Lazy terrain channel growth exceeded the RAM budget and no clean region can be evicted")
+			return
+		_evict(candidate)
+
+
+func _find_oldest_clean_region(excluded_coord: Vector2i = INVALID_COORD) -> Vector2i:
 	for coord in _lru:
-		if not _dirty.has(coord):
+		if coord != excluded_coord and not _dirty.has(coord):
 			return coord
 	return INVALID_COORD
 
@@ -255,7 +274,12 @@ func _evict(coord: Vector2i) -> void:
 	if not _cache.has(coord) or _dirty.has(coord):
 		return
 	var region: RegionData = _cache[coord] as RegionData
-	_cached_bytes = maxi(0, _cached_bytes - region.estimated_memory_bytes())
+	var callback: Callable = _region_memory_callbacks.get(coord, Callable())
+	if callback.is_valid() and region.memory_size_changed.is_connected(callback):
+		region.memory_size_changed.disconnect(callback)
+	_cached_bytes = maxi(0, _cached_bytes - int(_region_memory_bytes.get(coord, 0)))
+	_region_memory_bytes.erase(coord)
+	_region_memory_callbacks.erase(coord)
 	_cache.erase(coord)
 	_lru.erase(coord)
 
@@ -263,6 +287,29 @@ func _evict(coord: Vector2i) -> void:
 func _touch(coord: Vector2i) -> void:
 	_lru.erase(coord)
 	_lru.append(coord)
+
+
+func _on_region_memory_size_changed(
+	_previous_bytes: int,
+	current_bytes: int,
+	coord: Vector2i
+) -> void:
+	if not _cache.has(coord):
+		return
+	var tracked_bytes: int = int(_region_memory_bytes.get(coord, 0))
+	_cached_bytes = maxi(0, _cached_bytes + current_bytes - tracked_bytes)
+	_region_memory_bytes[coord] = current_bytes
+	_enforce_memory_budget(coord)
+
+
+func _refresh_region_memory_accounting(coord: Vector2i, region: RegionData) -> void:
+	var current_bytes: int = region.estimated_memory_bytes()
+	var tracked_bytes: int = int(_region_memory_bytes.get(coord, 0))
+	if current_bytes == tracked_bytes:
+		return
+	_cached_bytes = maxi(0, _cached_bytes + current_bytes - tracked_bytes)
+	_region_memory_bytes[coord] = current_bytes
+	_enforce_memory_budget(coord)
 
 
 func _ensure_writable_directories() -> void:
