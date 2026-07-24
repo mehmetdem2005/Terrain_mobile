@@ -3,6 +3,7 @@ extends RefCounted
 class_name IslandTerrainRegionRepository
 
 const RegionData = preload("res://addons/island_terrain/core/terrain_region_data.gd")
+const INVALID_COORD := Vector2i(-2147483648, -2147483648)
 
 var _world_data_root: String
 var _manifest: Resource
@@ -104,6 +105,15 @@ func region_file_path(coord: Vector2i) -> String:
 
 func _load_region(coord: Vector2i) -> Resource:
 	var path: String = region_file_path(coord)
+	var backup_path: String = _backup_path(path)
+	if not ResourceLoader.exists(path) and ResourceLoader.exists(backup_path):
+		var recovery_error: Error = DirAccess.rename_absolute(
+			ProjectSettings.globalize_path(backup_path),
+			ProjectSettings.globalize_path(path)
+		)
+		if recovery_error != OK:
+			push_error("IT-008: Failed to recover backup region %s" % coord)
+
 	if not ResourceLoader.exists(path):
 		return null
 	var loaded: Resource = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
@@ -114,13 +124,57 @@ func _load_region(coord: Vector2i) -> Resource:
 	if not errors.is_empty():
 		push_error("IT-003: Corrupt region %s: %s" % [coord, "; ".join(errors)])
 		return null
+	var expected_checksum: int = _calculate_checksum(loaded.height_data)
+	if loaded.checksum != 0 and loaded.checksum != expected_checksum:
+		push_error("IT-009: Region checksum mismatch for %s" % coord)
+		return null
 	return loaded
 
 
 func _save_region(coord: Vector2i, region: Resource) -> Error:
 	_ensure_directories()
-	region.checksum = _calculate_checksum(region.height_data)
-	return ResourceSaver.save(region, region_file_path(coord), ResourceSaver.FLAG_COMPRESS)
+	var final_path: String = region_file_path(coord)
+	var temporary_path: String = _temporary_path(final_path)
+	var backup_path: String = _backup_path(final_path)
+	var expected_checksum: int = _calculate_checksum(region.height_data)
+	region.checksum = expected_checksum
+
+	_remove_if_exists(temporary_path)
+	var save_error: Error = ResourceSaver.save(region, temporary_path, ResourceSaver.FLAG_COMPRESS)
+	if save_error != OK:
+		return save_error
+
+	# Verify the complete serialized payload before it can replace the last
+	# known-good region. CACHE_MODE_IGNORE prevents a stale resource-cache hit.
+	var verified: Resource = ResourceLoader.load(temporary_path, "", ResourceLoader.CACHE_MODE_IGNORE)
+	if verified == null or not verified.has_method("validate_dimensions"):
+		_remove_if_exists(temporary_path)
+		return ERR_FILE_CORRUPT
+	if not verified.validate_dimensions().is_empty() or verified.checksum != expected_checksum:
+		_remove_if_exists(temporary_path)
+		return ERR_FILE_CORRUPT
+
+	var final_absolute: String = ProjectSettings.globalize_path(final_path)
+	var temporary_absolute: String = ProjectSettings.globalize_path(temporary_path)
+	var backup_absolute: String = ProjectSettings.globalize_path(backup_path)
+	_remove_if_exists(backup_path)
+
+	var had_previous: bool = FileAccess.file_exists(final_path)
+	if had_previous:
+		var backup_error: Error = DirAccess.rename_absolute(final_absolute, backup_absolute)
+		if backup_error != OK:
+			_remove_if_exists(temporary_path)
+			return backup_error
+
+	var promote_error: Error = DirAccess.rename_absolute(temporary_absolute, final_absolute)
+	if promote_error != OK:
+		if had_previous and FileAccess.file_exists(backup_path):
+			DirAccess.rename_absolute(backup_absolute, final_absolute)
+		_remove_if_exists(temporary_path)
+		return promote_error
+
+	region.take_over_path(final_path)
+	return OK
 
 
 func _admit(coord: Vector2i, region: Resource) -> void:
@@ -138,8 +192,8 @@ func _make_room(incoming_bytes: int) -> void:
 		or not _budget.can_cache_region(incoming_bytes, _cached_bytes)
 	):
 		guard -= 1
-		var candidate := _find_oldest_clean_region()
-		if candidate == Vector2i(-2147483648, -2147483648):
+		var candidate: Vector2i = _find_oldest_clean_region()
+		if candidate == INVALID_COORD:
 			push_warning("IT-W02: Region cache budget reached but all cached regions are dirty; keeping data to avoid loss")
 			break
 		_evict(candidate)
@@ -149,7 +203,7 @@ func _find_oldest_clean_region() -> Vector2i:
 	for coord in _lru:
 		if not _dirty.has(coord):
 			return coord
-	return Vector2i(-2147483648, -2147483648)
+	return INVALID_COORD
 
 
 func _evict(coord: Vector2i) -> void:
@@ -173,11 +227,24 @@ func _ensure_directories() -> void:
 		push_error("IT-002: Cannot create terrain data directory: %s" % absolute_path)
 
 
+func _temporary_path(final_path: String) -> String:
+	return "%s.tmp.res" % final_path.trim_suffix(".res")
+
+
+func _backup_path(final_path: String) -> String:
+	return "%s.bak.res" % final_path.trim_suffix(".res")
+
+
+func _remove_if_exists(path: String) -> void:
+	if FileAccess.file_exists(path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+
+
 func _calculate_checksum(values: PackedFloat32Array) -> int:
 	# Fast deterministic integrity marker. It is not cryptographic; it detects
 	# truncated or accidentally replaced region payloads without extra copies.
 	var hash_value: int = 2166136261
-	var step: int = maxi(1, values.size() / 4096)
+	var step: int = maxi(1, int(values.size() / 4096.0))
 	var index: int = 0
 	while index < values.size():
 		hash_value = int((hash_value ^ hash(values[index])) * 16777619) & 0x7fffffff
