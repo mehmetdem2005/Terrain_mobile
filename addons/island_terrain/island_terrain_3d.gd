@@ -18,7 +18,7 @@ signal preview_generation_completed
 @export var manifest: ManifestResource
 @export_file("*.tres", "*.res") var manifest_path: String = "res://terrain_data/island_01/island_manifest.tres"
 @export_dir var world_data_root: String = "res://terrain_data/island_01"
-@export_dir var runtime_data_root: String = "user://terrain_data/island_01"
+@export var runtime_data_root: String = "user://terrain_data/island_01"
 
 @export_category("Mobile Performance")
 @export_enum("Low", "Balanced", "High", "Editor Preview") var device_profile: int = 1:
@@ -150,8 +150,9 @@ func mark_region_dirty(coord: Vector2i) -> void:
 
 
 func get_height_at_world(world_position: Vector3) -> float:
+	var terrain_base_y: float = global_position.y
 	if _macro_height_image == null or manifest == null:
-		return manifest.sea_level_m if manifest != null else 0.0
+		return terrain_base_y + manifest.sea_level_m if manifest != null else terrain_base_y
 	var terrain_origin := Vector2(global_position.x, global_position.z)
 	var half: float = float(manifest.world_size_m) * 0.5
 	var uv := Vector2(
@@ -159,12 +160,13 @@ func get_height_at_world(world_position: Vector3) -> float:
 		(world_position.z - terrain_origin.y + half) / float(manifest.world_size_m)
 	)
 	if uv.x < 0.0 or uv.y < 0.0 or uv.x > 1.0 or uv.y > 1.0:
-		return manifest.sea_level_m
+		return terrain_base_y + manifest.sea_level_m
 	var pixel := Vector2i(
 		clampi(roundi(uv.x * float(_macro_height_image.get_width() - 1)), 0, _macro_height_image.get_width() - 1),
 		clampi(roundi(uv.y * float(_macro_height_image.get_height() - 1)), 0, _macro_height_image.get_height() - 1)
 	)
-	return manifest.sea_level_m + _macro_height_image.get_pixelv(pixel).r * manifest.max_height_m
+	return terrain_base_y + manifest.sea_level_m \
+		+ _macro_height_image.get_pixelv(pixel).r * manifest.max_height_m
 
 
 func _initialize_terrain() -> void:
