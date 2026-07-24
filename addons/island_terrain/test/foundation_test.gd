@@ -50,6 +50,22 @@ func _test_manifest_and_coordinates() -> void:
 	var world_point: Vector3 = coordinates.region_pixel_to_world(Vector2i(1, 2), Vector2i(128, 128), 12.0)
 	_check(is_equal_approx(world_point.y, 12.0), "region pixel height conversion mismatch")
 
+	var translated := Coordinates.new(manifest, Vector2(100.0, -250.0))
+	_check(
+		translated.world_to_region(Vector3(100.0, 0.0, -250.0)) == Vector2i(8, 8),
+		"translated terrain centre region mismatch"
+	)
+	var translated_min: Vector3 = translated.region_origin_world(Vector2i.ZERO)
+	_check(
+		translated_min.is_equal_approx(Vector3(-1948.0, 0.0, -2298.0)),
+		"translated region origin mismatch"
+	)
+	translated.set_origin_world_xz(Vector2(-400.0, 600.0))
+	_check(
+		translated.world_to_region(Vector3(-400.0, 0.0, 600.0)) == Vector2i(8, 8),
+		"updated terrain origin was not applied"
+	)
+
 
 func _test_sparse_region_channels() -> void:
 	var region := RegionData.new()
