@@ -11,7 +11,7 @@ enum DeviceProfile {
 	EDITOR_PREVIEW,
 }
 
-@export var profile: DeviceProfile = DeviceProfile.BALANCED
+@export_enum("Low", "Balanced", "High", "Editor Preview") var profile: int = DeviceProfile.BALANCED
 @export_range(1, 49, 1) var max_cached_regions: int = Constants.DEFAULT_MAX_CACHED_REGIONS
 @export_range(65, 1025, 64) var macro_height_resolution: int = Constants.MOBILE_MACRO_RESOLUTION
 @export_range(3, 7, 1) var clipmap_levels: int = Constants.DEFAULT_CLIPMAP_LEVELS
@@ -23,10 +23,10 @@ enum DeviceProfile {
 @export_range(32, 768, 16) var terrain_vram_budget_mb: int = 160
 
 
-static func create_for_profile(target_profile: DeviceProfile) -> IslandTerrainMemoryBudget:
+static func create_for_profile(target_profile: int) -> IslandTerrainMemoryBudget:
 	var budget := IslandTerrainMemoryBudget.new()
-	budget.profile = target_profile
-	match target_profile:
+	budget.profile = clampi(target_profile, DeviceProfile.LOW, DeviceProfile.EDITOR_PREVIEW)
+	match budget.profile:
 		DeviceProfile.LOW:
 			budget.max_cached_regions = 5
 			budget.macro_height_resolution = 257
@@ -72,6 +72,7 @@ static func create_for_profile(target_profile: DeviceProfile) -> IslandTerrainMe
 
 
 func sanitize(editor_hint: bool) -> void:
+	profile = clampi(profile, DeviceProfile.LOW, DeviceProfile.EDITOR_PREVIEW)
 	max_cached_regions = clampi(max_cached_regions, 1, 49)
 	macro_height_resolution = Constants.safe_macro_resolution(macro_height_resolution, editor_hint)
 	clipmap_levels = Constants.clamp_clipmap_levels(clipmap_levels)
