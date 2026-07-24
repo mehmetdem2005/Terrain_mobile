@@ -1,0 +1,20 @@
+; Engine configuration file.
+; Minimal add-on validation project for MobileTerrain3D and IslandTerrain.
+; Edit through Godot where possible; manual changes can be error-prone.
+
+config_version=5
+
+[application]
+
+config/name="Terrain Mobile Add-ons"
+config/features=PackedStringArray("4.6", "Mobile")
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/island_terrain/plugin.cfg")
+
+[rendering]
+
+renderer/rendering_method="mobile"
+renderer/rendering_method.mobile="mobile"
+textures/default_filters/use_nearest_mipmap_filter=false
