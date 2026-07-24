@@ -25,7 +25,7 @@ float sample_height(vec2 terrain_uv, float mip_level) {
 void vertex() {
 	vec3 world_vertex = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	vec2 terrain_uv = world_vertex.xz / max(world_size_m, 1.0) + vec2(0.5);
-	float mip_level = clamp(lod_level, 0.0, 5.0);
+	float mip_level = clamp(lod_level, 0.0, 6.0);
 	float height_normalized = sample_height(terrain_uv, mip_level);
 	terrain_height_m = sea_level_m + height_normalized * max_height_m;
 
