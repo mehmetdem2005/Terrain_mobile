@@ -84,7 +84,11 @@ func _process(_delta: float) -> void:
 
 
 func _notification(what: int) -> void:
-	if what != NOTIFICATION_TRANSFORM_CHANGED or _transform_warning_emitted:
+	if what != NOTIFICATION_TRANSFORM_CHANGED:
+		return
+	if _coordinate_system != null:
+		_coordinate_system.set_origin_world_xz(Vector2(global_position.x, global_position.z))
+	if _transform_warning_emitted:
 		return
 	var basis: Basis = global_transform.basis
 	var scale_value: Vector3 = basis.get_scale()
@@ -177,7 +181,8 @@ func _initialize_terrain() -> void:
 		push_error("IT-001: Manifest validation failed: %s" % "; ".join(errors))
 		return
 
-	_coordinate_system = CoordinateSystem.new(manifest)
+	var origin_xz := Vector2(global_position.x, global_position.z)
+	_coordinate_system = CoordinateSystem.new(manifest, origin_xz)
 	var writable_root: String = world_data_root if Engine.is_editor_hint() else runtime_data_root
 	_region_repository = RegionRepository.new(
 		world_data_root,
