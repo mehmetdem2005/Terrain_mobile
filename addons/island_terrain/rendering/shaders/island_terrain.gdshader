@@ -5,8 +5,9 @@ uniform sampler2D height_texture : filter_linear_mipmap, repeat_disable;
 uniform float world_size_m = 4096.0;
 uniform float max_height_m = 512.0;
 uniform float sea_level_m = 0.0;
-uniform float lod_level = 0.0;
-uniform float skirt_depth_m = 8.0;
+uniform vec2 terrain_origin_world_xz = vec2(0.0);
+instance uniform float lod_level = 0.0;
+instance uniform float skirt_depth_m = 8.0;
 uniform vec3 low_color : source_color = vec3(0.20, 0.31, 0.12);
 uniform vec3 high_color : source_color = vec3(0.28, 0.25, 0.20);
 uniform vec3 rock_color : source_color = vec3(0.32, 0.31, 0.29);
@@ -24,7 +25,7 @@ float sample_height(vec2 terrain_uv, float mip_level) {
 
 void vertex() {
 	vec3 world_vertex = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	vec2 terrain_uv = world_vertex.xz / max(world_size_m, 1.0) + vec2(0.5);
+	vec2 terrain_uv = (world_vertex.xz - terrain_origin_world_xz) / max(world_size_m, 1.0) + vec2(0.5);
 	float mip_level = clamp(lod_level, 0.0, 6.0);
 	float height_normalized = sample_height(terrain_uv, mip_level);
 	terrain_height_m = sea_level_m + height_normalized * max_height_m;
