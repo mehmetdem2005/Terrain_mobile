@@ -4,6 +4,8 @@ class_name IslandTerrainRegionData
 
 const Constants = preload("res://addons/island_terrain/core/terrain_constants.gd")
 
+signal memory_size_changed(previous_bytes: int, current_bytes: int)
+
 @export var coord: Vector2i = Vector2i.ZERO
 @export var sample_count: int = Constants.DEFAULT_REGION_SAMPLES
 @export var height_data: PackedFloat32Array = PackedFloat32Array()
@@ -20,6 +22,7 @@ const Constants = preload("res://addons/island_terrain/core/terrain_constants.gd
 
 
 func initialize(p_coord: Vector2i, p_sample_count: int) -> void:
+	var previous_bytes: int = estimated_memory_bytes()
 	coord = p_coord
 	sample_count = p_sample_count
 	var count: int = sample_count * sample_count
@@ -27,9 +30,11 @@ func initialize(p_coord: Vector2i, p_sample_count: int) -> void:
 	height_data.fill(0.0)
 	revision = 1
 	checksum = 0
+	_emit_memory_change(previous_bytes)
 
 
 func ensure_channel(channel_name: StringName) -> void:
+	var previous_bytes: int = estimated_memory_bytes()
 	var pixel_count: int = sample_count * sample_count
 	match channel_name:
 		&"material_index":
@@ -61,10 +66,19 @@ func ensure_channel(channel_name: StringName) -> void:
 				foliage_mask.resize(pixel_count)
 				foliage_mask.fill(255)
 		&"runtime_delta":
-			if runtime_delta_data.is_empty():
-				runtime_delta_data = PackedByteArray()
+			# Sparse deformation payloads are assigned by the future volumetric
+			# backend. Keeping this channel empty costs no memory in heightfield mode.
+			pass
 		_:
 			push_warning("IT-W01: Unknown terrain channel requested: %s" % channel_name)
+	_emit_memory_change(previous_bytes)
+
+
+func set_runtime_delta_bytes(data: PackedByteArray) -> void:
+	var previous_bytes: int = estimated_memory_bytes()
+	runtime_delta_data = data
+	revision += 1
+	_emit_memory_change(previous_bytes)
 
 
 func validate_dimensions() -> PackedStringArray:
@@ -114,3 +128,9 @@ func estimated_memory_bytes() -> int:
 		+ hole_mask.size() \
 		+ foliage_mask.size() \
 		+ runtime_delta_data.size()
+
+
+func _emit_memory_change(previous_bytes: int) -> void:
+	var current_bytes: int = estimated_memory_bytes()
+	if current_bytes != previous_bytes:
+		memory_size_changed.emit(previous_bytes, current_bytes)
