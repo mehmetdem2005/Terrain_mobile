@@ -114,6 +114,12 @@ func _test_region_copy_on_write_roundtrip() -> void:
 		is_equal_approx(runtime_region.get_height(Vector2i(10, 12)), 42.5),
 		"runtime repository failed to fall back to packaged/source region"
 	)
+	var cached_before_channel: int = runtime_repo.cached_memory_bytes()
+	runtime_region.ensure_channel(&"wetness")
+	_check(
+		runtime_repo.cached_memory_bytes() == cached_before_channel + 65 * 65,
+		"repository failed to account for lazy channel memory growth"
+	)
 	runtime_region.set_height(Vector2i(10, 12), 77.25)
 	runtime_repo.mark_dirty(Vector2i.ZERO)
 	_check(runtime_repo.flush_all() == OK, "runtime copy-on-write flush failed")
@@ -127,6 +133,13 @@ func _test_region_copy_on_write_roundtrip() -> void:
 	_check(
 		is_equal_approx(reloaded.get_height(Vector2i(10, 12)), 77.25),
 		"runtime region roundtrip value mismatch"
+	)
+
+	var source_reload_repo := RegionRepository.new(source_root, source_root, manifest, budget)
+	var source_reloaded: RegionData = source_reload_repo.get_or_create(Vector2i.ZERO)
+	_check(
+		is_equal_approx(source_reloaded.get_height(Vector2i(10, 12)), 42.5),
+		"runtime copy-on-write modified the packaged/source region"
 	)
 
 	_remove_tree(test_root)
