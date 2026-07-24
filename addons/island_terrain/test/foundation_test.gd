@@ -5,6 +5,7 @@ const Manifest = preload("res://addons/island_terrain/core/terrain_manifest.gd")
 const Coordinates = preload("res://addons/island_terrain/core/terrain_coordinate_system.gd")
 const RegionData = preload("res://addons/island_terrain/core/terrain_region_data.gd")
 const MemoryBudget = preload("res://addons/island_terrain/core/terrain_memory_budget.gd")
+const RegionRepository = preload("res://addons/island_terrain/infrastructure/terrain_region_repository.gd")
 const MeshBuilder = preload("res://addons/island_terrain/rendering/clipmap_mesh_builder.gd")
 
 var _failures := PackedStringArray()
@@ -16,6 +17,7 @@ func _init() -> void:
 	_test_sparse_region_channels()
 	_test_memory_profiles()
 	_test_clipmap_mesh()
+	_test_region_copy_on_write_roundtrip()
 
 	if _failures.is_empty():
 		print("IslandTerrain foundation tests: PASS")
@@ -31,6 +33,10 @@ func _test_constants() -> void:
 	_check(not Constants.is_valid_sample_count(256), "256 must be rejected as a region sample count")
 	_check(Constants.safe_macro_resolution(7000, false) <= 513, "mobile macro resolution hard cap failed")
 	_check(Constants.clamp_base_quads(65) % 2 == 0, "base quads must remain even")
+	_check(
+		is_equal_approx(Constants.clipmap_radius_m(64, 7), 2048.0),
+		"seven 64-quad clipmap levels must cover the default island radius"
+	)
 
 
 func _test_manifest_and_coordinates() -> void:
@@ -62,6 +68,7 @@ func _test_memory_profiles() -> void:
 	_check(low.macro_height_resolution == 257, "low profile height resolution mismatch")
 	_check(low.max_cached_regions < high.max_cached_regions, "profile cache scaling mismatch")
 	_check(low.estimated_clipmap_vertices() < high.estimated_clipmap_vertices(), "profile clipmap scaling mismatch")
+	_check(low.shadow_lod_count < high.shadow_lod_count, "profile shadow scaling mismatch")
 	_check(low.can_cache_region(1024, 0), "low profile must admit a small region")
 
 
@@ -72,6 +79,75 @@ func _test_clipmap_mesh() -> void:
 	_check(ring.get_surface_count() == 1, "ring clipmap mesh surface missing")
 	_check(centre.surface_get_array_len(0) > 0, "centre clipmap mesh has no vertices")
 	_check(ring.surface_get_array_index_len(0) > 0, "ring clipmap mesh has no indices")
+	_check(
+		ring.surface_get_array_index_len(0) < centre.surface_get_array_index_len(0),
+		"LOD ring must remove its centre indices"
+	)
+
+
+func _test_region_copy_on_write_roundtrip() -> void:
+	var test_id: String = str(Time.get_ticks_usec())
+	var test_root: String = "user://island_terrain_foundation_%s" % test_id
+	var source_root: String = "%s/source" % test_root
+	var runtime_root: String = "%s/runtime" % test_root
+
+	var manifest := Manifest.new()
+	manifest.world_size_m = 512
+	manifest.region_size_m = 256
+	manifest.region_samples = 65
+	var budget := MemoryBudget.create_for_profile(MemoryBudget.DeviceProfile.LOW)
+	budget.max_cached_regions = 2
+
+	var authoring_repo := RegionRepository.new(source_root, source_root, manifest, budget)
+	var authored: RegionData = authoring_repo.get_or_create(Vector2i.ZERO)
+	authored.set_height(Vector2i(10, 12), 42.5)
+	authoring_repo.mark_dirty(Vector2i.ZERO)
+	_check(authoring_repo.flush_all() == OK, "authoring region flush failed")
+	_check(
+		FileAccess.file_exists(authoring_repo.writable_region_file_path(Vector2i.ZERO)),
+		"authored source region file missing"
+	)
+
+	var runtime_repo := RegionRepository.new(source_root, runtime_root, manifest, budget)
+	var runtime_region: RegionData = runtime_repo.get_or_create(Vector2i.ZERO)
+	_check(
+		is_equal_approx(runtime_region.get_height(Vector2i(10, 12)), 42.5),
+		"runtime repository failed to fall back to packaged/source region"
+	)
+	runtime_region.set_height(Vector2i(10, 12), 77.25)
+	runtime_repo.mark_dirty(Vector2i.ZERO)
+	_check(runtime_repo.flush_all() == OK, "runtime copy-on-write flush failed")
+	_check(
+		FileAccess.file_exists(runtime_repo.writable_region_file_path(Vector2i.ZERO)),
+		"runtime override region file missing"
+	)
+
+	var reload_repo := RegionRepository.new(source_root, runtime_root, manifest, budget)
+	var reloaded: RegionData = reload_repo.get_or_create(Vector2i.ZERO)
+	_check(
+		is_equal_approx(reloaded.get_height(Vector2i(10, 12)), 77.25),
+		"runtime region roundtrip value mismatch"
+	)
+
+	_remove_tree(test_root)
+
+
+func _remove_tree(path: String) -> void:
+	var directory := DirAccess.open(path)
+	if directory == null:
+		return
+	directory.list_dir_begin()
+	var entry: String = directory.get_next()
+	while not entry.is_empty():
+		if entry != "." and entry != "..":
+			var child_path: String = "%s/%s" % [path, entry]
+			if directory.current_is_dir():
+				_remove_tree(child_path)
+			else:
+				DirAccess.remove_absolute(ProjectSettings.globalize_path(child_path))
+		entry = directory.get_next()
+	directory.list_dir_end()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 
 
 func _check(condition: bool, message: String) -> void:
