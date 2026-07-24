@@ -2,33 +2,35 @@
 extends RefCounted
 class_name IslandTerrainRegionRepository
 
+const Manifest = preload("res://addons/island_terrain/core/terrain_manifest.gd")
+const Budget = preload("res://addons/island_terrain/core/terrain_memory_budget.gd")
 const RegionData = preload("res://addons/island_terrain/core/terrain_region_data.gd")
 const INVALID_COORD := Vector2i(-2147483648, -2147483648)
 
 var _world_data_root: String
-var _manifest: Resource
-var _budget: Resource
+var _manifest: Manifest
+var _budget: Budget
 var _cache: Dictionary = {}
 var _lru: Array[Vector2i] = []
 var _dirty: Dictionary = {}
 var _cached_bytes: int = 0
 
 
-func _init(world_data_root: String, manifest: Resource, budget: Resource) -> void:
+func _init(world_data_root: String, manifest: Manifest, budget: Budget) -> void:
 	_world_data_root = world_data_root.trim_suffix("/")
 	_manifest = manifest
 	_budget = budget
 	_ensure_directories()
 
 
-func get_or_create(coord: Vector2i) -> Resource:
+func get_or_create(coord: Vector2i) -> RegionData:
 	if not _manifest.contains_region(coord):
 		return null
 	if _cache.has(coord):
 		_touch(coord)
-		return _cache[coord]
+		return _cache[coord] as RegionData
 
-	var region: Resource = _load_region(coord)
+	var region: RegionData = _load_region(coord)
 	if region == null:
 		region = RegionData.new()
 		region.initialize(coord, _manifest.region_samples)
@@ -36,11 +38,11 @@ func get_or_create(coord: Vector2i) -> Resource:
 	return region
 
 
-func get_cached(coord: Vector2i) -> Resource:
+func get_cached(coord: Vector2i) -> RegionData:
 	if not _cache.has(coord):
 		return null
 	_touch(coord)
-	return _cache[coord]
+	return _cache[coord] as RegionData
 
 
 func mark_dirty(coord: Vector2i) -> void:
@@ -62,7 +64,8 @@ func save_dirty(max_regions: int = 1) -> int:
 		if not _cache.has(coord):
 			_dirty.erase(coord)
 			continue
-		var error: Error = _save_region(coord, _cache[coord])
+		var region: RegionData = _cache[coord] as RegionData
+		var error: Error = _save_region(coord, region)
 		if error == OK:
 			_dirty.erase(coord)
 			saved += 1
@@ -103,7 +106,7 @@ func region_file_path(coord: Vector2i) -> String:
 	return "%s/regions/region_%d_%d.res" % [_world_data_root, coord.x, coord.y]
 
 
-func _load_region(coord: Vector2i) -> Resource:
+func _load_region(coord: Vector2i) -> RegionData:
 	var path: String = region_file_path(coord)
 	var backup_path: String = _backup_path(path)
 	if not ResourceLoader.exists(path) and ResourceLoader.exists(backup_path):
@@ -116,8 +119,8 @@ func _load_region(coord: Vector2i) -> Resource:
 
 	if not ResourceLoader.exists(path):
 		return null
-	var loaded: Resource = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
-	if loaded == null or not loaded.has_method("validate_dimensions"):
+	var loaded := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE) as RegionData
+	if loaded == null:
 		push_error("IT-003: Invalid region resource at %s" % path)
 		return null
 	var errors: PackedStringArray = loaded.validate_dimensions()
@@ -131,7 +134,7 @@ func _load_region(coord: Vector2i) -> Resource:
 	return loaded
 
 
-func _save_region(coord: Vector2i, region: Resource) -> Error:
+func _save_region(coord: Vector2i, region: RegionData) -> Error:
 	_ensure_directories()
 	var final_path: String = region_file_path(coord)
 	var temporary_path: String = _temporary_path(final_path)
@@ -146,8 +149,8 @@ func _save_region(coord: Vector2i, region: Resource) -> Error:
 
 	# Verify the complete serialized payload before it can replace the last
 	# known-good region. CACHE_MODE_IGNORE prevents a stale resource-cache hit.
-	var verified: Resource = ResourceLoader.load(temporary_path, "", ResourceLoader.CACHE_MODE_IGNORE)
-	if verified == null or not verified.has_method("validate_dimensions"):
+	var verified := ResourceLoader.load(temporary_path, "", ResourceLoader.CACHE_MODE_IGNORE) as RegionData
+	if verified == null:
 		_remove_if_exists(temporary_path)
 		return ERR_FILE_CORRUPT
 	if not verified.validate_dimensions().is_empty() or verified.checksum != expected_checksum:
@@ -177,7 +180,7 @@ func _save_region(coord: Vector2i, region: Resource) -> Error:
 	return OK
 
 
-func _admit(coord: Vector2i, region: Resource) -> void:
+func _admit(coord: Vector2i, region: RegionData) -> void:
 	var bytes: int = region.estimated_memory_bytes()
 	_make_room(bytes)
 	_cache[coord] = region
@@ -209,7 +212,7 @@ func _find_oldest_clean_region() -> Vector2i:
 func _evict(coord: Vector2i) -> void:
 	if not _cache.has(coord) or _dirty.has(coord):
 		return
-	var region: Resource = _cache[coord]
+	var region: RegionData = _cache[coord] as RegionData
 	_cached_bytes = maxi(0, _cached_bytes - region.estimated_memory_bytes())
 	_cache.erase(coord)
 	_lru.erase(coord)
