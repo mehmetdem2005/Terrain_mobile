@@ -15,6 +15,7 @@ var _pending_levels: Array[int] = []
 var _level_instances: Array[MeshInstance3D] = []
 var _configured: bool = false
 var _last_terrain_origin_xz := Vector2(1.0e30, 1.0e30)
+var _last_shared_snap_position := Vector3(1.0e30, 0.0, 1.0e30)
 
 
 func _ready() -> void:
@@ -49,6 +50,7 @@ func set_height_texture(texture: Texture2D) -> void:
 func rebuild_deferred() -> void:
 	_clear_levels()
 	_pending_levels.clear()
+	_last_shared_snap_position = Vector3(1.0e30, 0.0, 1.0e30)
 	if _manifest == null or _budget == null or _source_material == null or _height_texture == null:
 		_configured = false
 		return
@@ -99,6 +101,9 @@ func _build_level(level: int) -> void:
 		&"skirt_depth_m",
 		maxf(4.0, float(1 << level) * 2.0)
 	)
+	instance.position = _last_shared_snap_position \
+		if _last_shared_snap_position.x < 1.0e20 \
+		else Vector3.ZERO
 	add_child(instance)
 	_level_instances[level] = instance
 
@@ -131,16 +136,21 @@ func _update_camera_snapping() -> void:
 	if not is_instance_valid(camera):
 		return
 	var camera_local: Vector3 = to_local(camera.global_position)
-	for level in range(_level_instances.size()):
-		var instance: MeshInstance3D = _level_instances[level]
-		if not is_instance_valid(instance):
-			continue
-		var grid_spacing: float = float(1 << level)
-		instance.position = Vector3(
-			floorf(camera_local.x / grid_spacing) * grid_spacing,
-			0.0,
-			floorf(camera_local.z / grid_spacing) * grid_spacing
-		)
+	# Until trim meshes are introduced, all concentric levels must share the
+	# same snapped centre. Independent per-LOD centres shift the hollow ring and
+	# can open a visible gap against the finer level.
+	var finest_spacing: float = 1.0
+	var shared_snap := Vector3(
+		floorf(camera_local.x / finest_spacing) * finest_spacing,
+		0.0,
+		floorf(camera_local.z / finest_spacing) * finest_spacing
+	)
+	if shared_snap.is_equal_approx(_last_shared_snap_position):
+		return
+	_last_shared_snap_position = shared_snap
+	for instance in _level_instances:
+		if is_instance_valid(instance):
+			instance.position = shared_snap
 
 
 func _clear_levels() -> void:
