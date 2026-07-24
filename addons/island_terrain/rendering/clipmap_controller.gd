@@ -2,10 +2,12 @@
 extends Node3D
 class_name IslandTerrainClipmapController
 
+const Manifest = preload("res://addons/island_terrain/core/terrain_manifest.gd")
+const Budget = preload("res://addons/island_terrain/core/terrain_memory_budget.gd")
 const MeshBuilder = preload("res://addons/island_terrain/rendering/clipmap_mesh_builder.gd")
 
-var _manifest: Resource
-var _budget: Resource
+var _manifest: Manifest
+var _budget: Budget
 var _source_material: ShaderMaterial
 var _height_texture: Texture2D
 var _camera: Camera3D
@@ -19,8 +21,8 @@ func _ready() -> void:
 
 
 func configure(
-	manifest: Resource,
-	budget: Resource,
+	manifest: Manifest,
+	budget: Budget,
 	material: ShaderMaterial,
 	height_texture: Texture2D
 ) -> void:
@@ -89,6 +91,9 @@ func _build_level(level: int) -> void:
 	instance.extra_cull_margin = float(_manifest.max_height_m) + 32.0
 
 	var material := _source_material.duplicate() as ShaderMaterial
+	if material == null:
+		push_error("IT-010: Failed to duplicate terrain material for LOD %d" % level)
+		return
 	material.set_shader_parameter("height_texture", _height_texture)
 	material.set_shader_parameter("world_size_m", float(_manifest.world_size_m))
 	material.set_shader_parameter("max_height_m", _manifest.max_height_m)
