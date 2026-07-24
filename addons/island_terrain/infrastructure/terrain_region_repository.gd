@@ -7,7 +7,8 @@ const Budget = preload("res://addons/island_terrain/core/terrain_memory_budget.g
 const RegionData = preload("res://addons/island_terrain/core/terrain_region_data.gd")
 const INVALID_COORD := Vector2i(-2147483648, -2147483648)
 
-var _world_data_root: String
+var _source_data_root: String
+var _writable_data_root: String
 var _manifest: Manifest
 var _budget: Budget
 var _cache: Dictionary = {}
@@ -16,11 +17,17 @@ var _dirty: Dictionary = {}
 var _cached_bytes: int = 0
 
 
-func _init(world_data_root: String, manifest: Manifest, budget: Budget) -> void:
-	_world_data_root = world_data_root.trim_suffix("/")
+func _init(
+	source_data_root: String,
+	writable_data_root: String,
+	manifest: Manifest,
+	budget: Budget
+) -> void:
+	_source_data_root = source_data_root.trim_suffix("/")
+	_writable_data_root = writable_data_root.trim_suffix("/")
 	_manifest = manifest
 	_budget = budget
-	_ensure_directories()
+	_ensure_writable_directories()
 
 
 func get_or_create(coord: Vector2i) -> RegionData:
@@ -102,21 +109,37 @@ func clear_clean_cache() -> void:
 			_evict(coord)
 
 
-func region_file_path(coord: Vector2i) -> String:
-	return "%s/regions/region_%d_%d.res" % [_world_data_root, coord.x, coord.y]
+func source_region_file_path(coord: Vector2i) -> String:
+	return "%s/regions/region_%d_%d.res" % [_source_data_root, coord.x, coord.y]
+
+
+func writable_region_file_path(coord: Vector2i) -> String:
+	return "%s/regions/region_%d_%d.res" % [_writable_data_root, coord.x, coord.y]
 
 
 func _load_region(coord: Vector2i) -> RegionData:
-	var path: String = region_file_path(coord)
-	var backup_path: String = _backup_path(path)
-	if not ResourceLoader.exists(path) and ResourceLoader.exists(backup_path):
-		var recovery_error: Error = DirAccess.rename_absolute(
-			ProjectSettings.globalize_path(backup_path),
-			ProjectSettings.globalize_path(path)
-		)
-		if recovery_error != OK:
-			push_error("IT-008: Failed to recover backup region %s" % coord)
+	var writable_path: String = writable_region_file_path(coord)
+	var backup_path: String = _backup_path(writable_path)
 
+	var writable_region: RegionData = _load_validated_region(writable_path, coord)
+	if writable_region != null:
+		return writable_region
+
+	# A previous write may have been interrupted after the old final file was
+	# renamed. Recover the validated backup before falling back to packaged data.
+	var backup_region: RegionData = _load_validated_region(backup_path, coord)
+	if backup_region != null:
+		_recover_backup(writable_path, backup_path)
+		backup_region.take_over_path(writable_path)
+		return backup_region
+
+	var source_path: String = source_region_file_path(coord)
+	if source_path == writable_path:
+		return null
+	return _load_validated_region(source_path, coord)
+
+
+func _load_validated_region(path: String, coord: Vector2i) -> RegionData:
 	if not ResourceLoader.exists(path):
 		return null
 	var loaded := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE) as RegionData
@@ -125,18 +148,18 @@ func _load_region(coord: Vector2i) -> RegionData:
 		return null
 	var errors: PackedStringArray = loaded.validate_dimensions()
 	if not errors.is_empty():
-		push_error("IT-003: Corrupt region %s: %s" % [coord, "; ".join(errors)])
+		push_error("IT-003: Corrupt region %s at %s: %s" % [coord, path, "; ".join(errors)])
 		return null
 	var expected_checksum: int = _calculate_checksum(loaded.height_data)
 	if loaded.checksum != 0 and loaded.checksum != expected_checksum:
-		push_error("IT-009: Region checksum mismatch for %s" % coord)
+		push_error("IT-009: Region checksum mismatch for %s at %s" % [coord, path])
 		return null
 	return loaded
 
 
 func _save_region(coord: Vector2i, region: RegionData) -> Error:
-	_ensure_directories()
-	var final_path: String = region_file_path(coord)
+	_ensure_writable_directories()
+	var final_path: String = writable_region_file_path(coord)
 	var temporary_path: String = _temporary_path(final_path)
 	var backup_path: String = _backup_path(final_path)
 	var expected_checksum: int = _calculate_checksum(region.height_data)
@@ -178,6 +201,25 @@ func _save_region(coord: Vector2i, region: RegionData) -> Error:
 
 	region.take_over_path(final_path)
 	return OK
+
+
+func _recover_backup(final_path: String, backup_path: String) -> void:
+	if FileAccess.file_exists(final_path):
+		var corrupt_path: String = "%s.corrupt.%d.res" % [
+			final_path.trim_suffix(".res"),
+			int(Time.get_unix_time_from_system()),
+		]
+		DirAccess.rename_absolute(
+			ProjectSettings.globalize_path(final_path),
+			ProjectSettings.globalize_path(corrupt_path)
+		)
+	if FileAccess.file_exists(backup_path):
+		var recovery_error: Error = DirAccess.rename_absolute(
+			ProjectSettings.globalize_path(backup_path),
+			ProjectSettings.globalize_path(final_path)
+		)
+		if recovery_error != OK:
+			push_error("IT-008: Failed to recover terrain region backup at %s" % backup_path)
 
 
 func _admit(coord: Vector2i, region: RegionData) -> void:
@@ -223,11 +265,11 @@ func _touch(coord: Vector2i) -> void:
 	_lru.append(coord)
 
 
-func _ensure_directories() -> void:
-	var absolute_path: String = ProjectSettings.globalize_path("%s/regions" % _world_data_root)
+func _ensure_writable_directories() -> void:
+	var absolute_path: String = ProjectSettings.globalize_path("%s/regions" % _writable_data_root)
 	var error: Error = DirAccess.make_dir_recursive_absolute(absolute_path)
 	if error != OK and error != ERR_ALREADY_EXISTS:
-		push_error("IT-002: Cannot create terrain data directory: %s" % absolute_path)
+		push_error("IT-002: Cannot create writable terrain data directory: %s" % absolute_path)
 
 
 func _temporary_path(final_path: String) -> String:
@@ -244,12 +286,6 @@ func _remove_if_exists(path: String) -> void:
 
 
 func _calculate_checksum(values: PackedFloat32Array) -> int:
-	# Fast deterministic integrity marker. It is not cryptographic; it detects
-	# truncated or accidentally replaced region payloads without extra copies.
-	var hash_value: int = 2166136261
-	var step: int = maxi(1, int(values.size() / 4096.0))
-	var index: int = 0
-	while index < values.size():
-		hash_value = int((hash_value ^ hash(values[index])) * 16777619) & 0x7fffffff
-		index += step
-	return hash_value
+	# GlobalScope.hash() processes the full packed array in native code. This is
+	# stronger than sampling a few values and avoids a GDScript per-element loop.
+	return int(hash(values)) & 0x7fffffff
