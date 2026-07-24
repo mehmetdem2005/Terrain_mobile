@@ -5,10 +5,20 @@ class_name IslandTerrainCoordinateSystem
 const Manifest = preload("res://addons/island_terrain/core/terrain_manifest.gd")
 
 var _manifest: Manifest
+var _origin_world_xz: Vector2 = Vector2.ZERO
 
 
-func _init(manifest: Manifest) -> void:
+func _init(manifest: Manifest, origin_world_xz: Vector2 = Vector2.ZERO) -> void:
 	_manifest = manifest
+	_origin_world_xz = origin_world_xz
+
+
+func set_origin_world_xz(origin_world_xz: Vector2) -> void:
+	_origin_world_xz = origin_world_xz
+
+
+func origin_world_xz() -> Vector2:
+	return _origin_world_xz
 
 
 func world_half_extent() -> float:
@@ -17,14 +27,16 @@ func world_half_extent() -> float:
 
 func is_inside_world(world_position: Vector3) -> bool:
 	var half: float = world_half_extent()
-	return world_position.x >= -half and world_position.z >= -half \
-		and world_position.x < half and world_position.z < half
+	var local_x: float = world_position.x - _origin_world_xz.x
+	var local_z: float = world_position.z - _origin_world_xz.y
+	return local_x >= -half and local_z >= -half \
+		and local_x < half and local_z < half
 
 
 func world_to_region(world_position: Vector3) -> Vector2i:
 	var half: float = world_half_extent()
-	var local_x: float = world_position.x + half
-	var local_z: float = world_position.z + half
+	var local_x: float = world_position.x - _origin_world_xz.x + half
+	var local_z: float = world_position.z - _origin_world_xz.y + half
 	return Vector2i(
 		floori(local_x / float(_manifest.region_size_m)),
 		floori(local_z / float(_manifest.region_size_m))
@@ -43,9 +55,9 @@ func clamp_region(coord: Vector2i) -> Vector2i:
 func region_origin_world(coord: Vector2i) -> Vector3:
 	var half: float = world_half_extent()
 	return Vector3(
-		-half + float(coord.x * _manifest.region_size_m),
+		_origin_world_xz.x - half + float(coord.x * _manifest.region_size_m),
 		0.0,
-		-half + float(coord.y * _manifest.region_size_m)
+		_origin_world_xz.y - half + float(coord.y * _manifest.region_size_m)
 	)
 
 
