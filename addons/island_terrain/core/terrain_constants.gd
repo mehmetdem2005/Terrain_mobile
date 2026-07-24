@@ -8,10 +8,11 @@ const DEFAULT_REGION_SIZE_M: int = 256
 const DEFAULT_REGION_SAMPLES: int = 257
 const DEFAULT_MAX_HEIGHT_M: float = 512.0
 
-# Mobile safety limits. These are hard caps, not suggested quality values.
+# Mobile safety limits. Seven 64-quad levels reach a 2048 m radius without
+# increasing the dense near-field grid. This covers the default 4 km island.
 const MIN_CLIPMAP_LEVELS: int = 3
-const MAX_CLIPMAP_LEVELS: int = 6
-const DEFAULT_CLIPMAP_LEVELS: int = 5
+const MAX_CLIPMAP_LEVELS: int = 7
+const DEFAULT_CLIPMAP_LEVELS: int = 6
 const MIN_BASE_QUADS: int = 16
 const MAX_BASE_QUADS: int = 96
 const DEFAULT_BASE_QUADS: int = 64
@@ -54,6 +55,12 @@ static func safe_macro_resolution(requested: int, editor_hint: bool) -> int:
 	if power + 1 > hard_cap:
 		power >>= 1
 	return power + 1
+
+
+static func clipmap_radius_m(base_quads: int, levels: int) -> float:
+	var safe_quads: int = clamp_base_quads(base_quads)
+	var safe_levels: int = clamp_clipmap_levels(levels)
+	return float(safe_quads) * 0.5 * float(1 << (safe_levels - 1))
 
 
 static func _is_power_of_two(value: int) -> bool:
