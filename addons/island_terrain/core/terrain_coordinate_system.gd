@@ -4,10 +4,10 @@ class_name IslandTerrainCoordinateSystem
 
 const Manifest = preload("res://addons/island_terrain/core/terrain_manifest.gd")
 
-var _manifest: Resource
+var _manifest: Manifest
 
 
-func _init(manifest: Resource) -> void:
+func _init(manifest: Manifest) -> void:
 	_manifest = manifest
 
 
