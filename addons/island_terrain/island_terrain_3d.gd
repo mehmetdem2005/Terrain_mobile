@@ -5,6 +5,7 @@ class_name IslandTerrain3D
 const ManifestResource = preload("res://addons/island_terrain/core/terrain_manifest.gd")
 const MemoryBudget = preload("res://addons/island_terrain/core/terrain_memory_budget.gd")
 const CoordinateSystem = preload("res://addons/island_terrain/core/terrain_coordinate_system.gd")
+const RegionData = preload("res://addons/island_terrain/core/terrain_region_data.gd")
 const RegionRepository = preload("res://addons/island_terrain/infrastructure/terrain_region_repository.gd")
 const ClipmapController = preload("res://addons/island_terrain/rendering/clipmap_controller.gd")
 const TERRAIN_SHADER = preload("res://addons/island_terrain/rendering/shaders/island_terrain.gdshader")
@@ -14,14 +15,14 @@ signal preview_generation_progress(progress: float)
 signal preview_generation_completed
 
 @export_category("Terrain Data")
-@export var manifest: Resource
+@export var manifest: ManifestResource
 @export_file("*.tres", "*.res") var manifest_path: String = "res://terrain_data/island_01/island_manifest.tres"
 @export_dir var world_data_root: String = "res://terrain_data/island_01"
 
 @export_category("Mobile Performance")
 @export_enum("Low", "Balanced", "High", "Editor Preview") var device_profile: int = 1:
 	set = _set_device_profile
-@export var memory_budget: Resource
+@export var memory_budget: MemoryBudget
 @export var generate_preview_on_ready: bool = true
 @export_range(0.1, 1.0, 0.01) var preview_height_scale: float = 0.72
 
@@ -31,9 +32,9 @@ signal preview_generation_completed
 @export var save_manifest_requested: bool = false:
 	set = _set_save_manifest_requested
 
-var _coordinate_system: RefCounted
-var _region_repository: RefCounted
-var _clipmap: Node3D
+var _coordinate_system: CoordinateSystem
+var _region_repository: RegionRepository
+var _clipmap: ClipmapController
 var _terrain_material: ShaderMaterial
 var _height_texture: ImageTexture
 var _macro_height_image: Image
@@ -54,11 +55,10 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
-	if _region_repository != null and _region_repository.has_method("dirty_region_count"):
-		if _region_repository.dirty_region_count() > 0:
-			var error: Error = _region_repository.flush_all()
-			if error != OK:
-				push_error("IT-005: Failed to flush dirty terrain regions during shutdown")
+	if _region_repository != null and _region_repository.dirty_region_count() > 0:
+		var error: Error = _region_repository.flush_all()
+		if error != OK:
+			push_error("IT-005: Failed to flush dirty terrain regions during shutdown")
 
 
 func _process(_delta: float) -> void:
@@ -103,7 +103,7 @@ func save_manifest() -> Error:
 	return ResourceSaver.save(manifest, target_path, ResourceSaver.FLAG_COMPRESS)
 
 
-func get_region(coord: Vector2i) -> Resource:
+func get_region(coord: Vector2i) -> RegionData:
 	if _region_repository == null:
 		return null
 	return _region_repository.get_or_create(coord)
@@ -145,8 +145,13 @@ func _initialize_terrain() -> void:
 	_terrain_material.shader = TERRAIN_SHADER
 	_height_texture = _create_flat_height_texture()
 
-	_clipmap = get_node_or_null("__IslandClipmap")
-	if _clipmap == null:
+	var existing_node: Node = get_node_or_null("__IslandClipmap")
+	if existing_node != null:
+		_clipmap = existing_node as ClipmapController
+		if _clipmap == null:
+			push_error("IT-011: Reserved child name __IslandClipmap is occupied by an incompatible node")
+			return
+	else:
 		_clipmap = ClipmapController.new()
 		_clipmap.name = "__IslandClipmap"
 		add_child(_clipmap, false, Node.INTERNAL_MODE_BACK)
@@ -160,11 +165,15 @@ func _initialize_terrain() -> void:
 
 
 func _ensure_manifest() -> void:
-	if manifest != null and manifest.has_method("validate"):
+	if manifest != null:
 		return
 	if not manifest_path.is_empty() and ResourceLoader.exists(manifest_path):
-		var loaded: Resource = ResourceLoader.load(manifest_path, "", ResourceLoader.CACHE_MODE_IGNORE)
-		if loaded != null and loaded.has_method("validate"):
+		var loaded := ResourceLoader.load(
+			manifest_path,
+			"",
+			ResourceLoader.CACHE_MODE_IGNORE
+		) as ManifestResource
+		if loaded != null:
 			manifest = loaded
 			return
 	manifest = ManifestResource.new()
@@ -173,14 +182,14 @@ func _ensure_manifest() -> void:
 
 
 func _ensure_memory_budget() -> void:
-	if memory_budget == null or not memory_budget.has_method("sanitize"):
+	if memory_budget == null:
 		memory_budget = MemoryBudget.create_for_profile(device_profile)
 	memory_budget.profile = clampi(device_profile, 0, 3)
 	memory_budget.sanitize(Engine.is_editor_hint())
 
 
 func _create_flat_height_texture() -> ImageTexture:
-	var image := Image.create(3, 3, false, Image.FORMAT_RF)
+	var image := Image.create_empty(3, 3, true, Image.FORMAT_RF)
 	image.fill(Color(0.0, 0.0, 0.0, 1.0))
 	image.generate_mipmaps()
 	_macro_height_image = image
