@@ -18,6 +18,7 @@ signal preview_generation_completed
 @export var manifest: ManifestResource
 @export_file("*.tres", "*.res") var manifest_path: String = "res://terrain_data/island_01/island_manifest.tres"
 @export_dir var world_data_root: String = "res://terrain_data/island_01"
+@export_dir var runtime_data_root: String = "user://terrain_data/island_01"
 
 @export_category("Mobile Performance")
 @export_enum("Low", "Balanced", "High", "Editor Preview") var device_profile: int = 1:
@@ -25,6 +26,7 @@ signal preview_generation_completed
 @export var memory_budget: MemoryBudget
 @export var generate_preview_on_ready: bool = true
 @export_range(0.1, 1.0, 0.01) var preview_height_scale: float = 0.72
+@export_range(0, 4, 1) var runtime_shutdown_flush_limit: int = 2
 
 @export_category("Editor Commands")
 @export var rebuild_preview_requested: bool = false:
@@ -55,10 +57,22 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
-	if _region_repository != null and _region_repository.dirty_region_count() > 0:
-		var error: Error = _region_repository.flush_all()
-		if error != OK:
-			push_error("IT-005: Failed to flush dirty terrain regions during shutdown")
+	if _region_repository == null or _region_repository.dirty_region_count() == 0:
+		return
+	if Engine.is_editor_hint():
+		var editor_error: Error = _region_repository.flush_all()
+		if editor_error != OK:
+			push_error("IT-005: Failed to flush dirty terrain regions during editor shutdown")
+		return
+
+	if runtime_shutdown_flush_limit > 0:
+		_region_repository.save_dirty(runtime_shutdown_flush_limit)
+	var remaining: int = _region_repository.dirty_region_count()
+	if remaining > 0:
+		push_warning(
+			"IT-W06: Runtime shutdown ended with %d unsaved terrain regions; call flush_pending_saves() at explicit save points" \
+			% remaining
+		)
 
 
 func _process(_delta: float) -> void:
@@ -72,16 +86,34 @@ func _process(_delta: float) -> void:
 func _notification(what: int) -> void:
 	if what != NOTIFICATION_TRANSFORM_CHANGED or _transform_warning_emitted:
 		return
-	var scale_value: Vector3 = global_transform.basis.get_scale()
-	if not is_equal_approx(scale_value.x, scale_value.y) or not is_equal_approx(scale_value.x, scale_value.z):
+	var basis: Basis = global_transform.basis
+	var scale_value: Vector3 = basis.get_scale()
+	var rotation_basis: Basis = basis.orthonormalized()
+	var axis_aligned: bool = rotation_basis.x.is_equal_approx(Vector3.RIGHT) \
+		and rotation_basis.y.is_equal_approx(Vector3.UP) \
+		and rotation_basis.z.is_equal_approx(Vector3.BACK)
+	if not scale_value.is_equal_approx(Vector3.ONE) or not axis_aligned:
 		_transform_warning_emitted = true
-		push_warning("IT-W03: IslandTerrain3D should use uniform scale; non-uniform scale distorts heightfield normals")
+		push_warning(
+			"IT-W03: IslandTerrain3D supports translation but requires identity rotation and unit scale for exact heightfield coordinates"
+		)
 
 
 func request_preview_rebuild() -> void:
 	if not _initialized:
 		return
 	_schedule_preview_generation()
+
+
+func flush_pending_saves(max_regions: int = -1) -> Error:
+	if _region_repository == null:
+		return OK
+	if max_regions < 0:
+		return _region_repository.flush_all()
+	if max_regions == 0:
+		return OK
+	_region_repository.save_dirty(max_regions)
+	return OK if _region_repository.dirty_region_count() == 0 else ERR_BUSY
 
 
 func save_manifest() -> Error:
@@ -95,6 +127,9 @@ func save_manifest() -> Error:
 	var target_path: String = manifest_path
 	if target_path.is_empty():
 		target_path = "%s/island_manifest.tres" % world_data_root.trim_suffix("/")
+	if not Engine.is_editor_hint() and target_path.begins_with("res://"):
+		push_error("IT-012: Runtime cannot write the packaged terrain manifest under res://")
+		return ERR_UNAUTHORIZED
 	var directory_error: Error = DirAccess.make_dir_recursive_absolute(
 		ProjectSettings.globalize_path(target_path.get_base_dir())
 	)
@@ -117,10 +152,11 @@ func mark_region_dirty(coord: Vector2i) -> void:
 func get_height_at_world(world_position: Vector3) -> float:
 	if _macro_height_image == null or manifest == null:
 		return manifest.sea_level_m if manifest != null else 0.0
+	var terrain_origin := Vector2(global_position.x, global_position.z)
 	var half: float = float(manifest.world_size_m) * 0.5
 	var uv := Vector2(
-		(world_position.x + half) / float(manifest.world_size_m),
-		(world_position.z + half) / float(manifest.world_size_m)
+		(world_position.x - terrain_origin.x + half) / float(manifest.world_size_m),
+		(world_position.z - terrain_origin.y + half) / float(manifest.world_size_m)
 	)
 	if uv.x < 0.0 or uv.y < 0.0 or uv.x > 1.0 or uv.y > 1.0:
 		return manifest.sea_level_m
@@ -140,7 +176,13 @@ func _initialize_terrain() -> void:
 		return
 
 	_coordinate_system = CoordinateSystem.new(manifest)
-	_region_repository = RegionRepository.new(world_data_root, manifest, memory_budget)
+	var writable_root: String = world_data_root if Engine.is_editor_hint() else runtime_data_root
+	_region_repository = RegionRepository.new(
+		world_data_root,
+		writable_root,
+		manifest,
+		memory_budget
+	)
 	_terrain_material = ShaderMaterial.new()
 	_terrain_material.shader = TERRAIN_SHADER
 	_height_texture = _create_flat_height_texture()
