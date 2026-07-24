@@ -14,6 +14,7 @@ var _camera: Camera3D
 var _pending_levels: Array[int] = []
 var _level_instances: Array[MeshInstance3D] = []
 var _configured: bool = false
+var _last_terrain_origin_xz := Vector2(1.0e30, 1.0e30)
 
 
 func _ready() -> void:
@@ -31,6 +32,7 @@ func configure(
 	_source_material = material
 	_height_texture = height_texture
 	_budget.sanitize(Engine.is_editor_hint())
+	_apply_shared_material_parameters()
 	rebuild_deferred()
 
 
@@ -40,12 +42,8 @@ func set_tracking_camera(camera: Camera3D) -> void:
 
 func set_height_texture(texture: Texture2D) -> void:
 	_height_texture = texture
-	for instance in _level_instances:
-		if not is_instance_valid(instance):
-			continue
-		var material := instance.material_override as ShaderMaterial
-		if material != null:
-			material.set_shader_parameter("height_texture", _height_texture)
+	if _source_material != null:
+		_source_material.set_shader_parameter("height_texture", _height_texture)
 
 
 func rebuild_deferred() -> void:
@@ -63,6 +61,7 @@ func rebuild_deferred() -> void:
 func _process(_delta: float) -> void:
 	if not _configured:
 		return
+	_update_terrain_origin_parameter()
 	_build_within_frame_budget()
 	_update_camera_snapping()
 
@@ -87,22 +86,42 @@ func _build_level(level: int) -> void:
 	var instance := MeshInstance3D.new()
 	instance.name = "ClipmapLOD%d" % level
 	instance.mesh = MeshBuilder.build_level(_budget.base_quads, level)
-	instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	instance.cast_shadow = (
+		GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		if level < _budget.shadow_lod_count
+		else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	)
+	instance.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
 	instance.extra_cull_margin = float(_manifest.max_height_m) + 32.0
-
-	var material := _source_material.duplicate() as ShaderMaterial
-	if material == null:
-		push_error("IT-010: Failed to duplicate terrain material for LOD %d" % level)
-		return
-	material.set_shader_parameter("height_texture", _height_texture)
-	material.set_shader_parameter("world_size_m", float(_manifest.world_size_m))
-	material.set_shader_parameter("max_height_m", _manifest.max_height_m)
-	material.set_shader_parameter("sea_level_m", _manifest.sea_level_m)
-	material.set_shader_parameter("lod_level", float(level))
-	material.set_shader_parameter("skirt_depth_m", maxf(4.0, float(1 << level) * 2.0))
-	instance.material_override = material
+	instance.material_override = _source_material
+	instance.set_instance_shader_parameter(&"lod_level", float(level))
+	instance.set_instance_shader_parameter(
+		&"skirt_depth_m",
+		maxf(4.0, float(1 << level) * 2.0)
+	)
 	add_child(instance)
 	_level_instances[level] = instance
+
+
+func _apply_shared_material_parameters() -> void:
+	if _source_material == null or _manifest == null:
+		return
+	_source_material.set_shader_parameter("height_texture", _height_texture)
+	_source_material.set_shader_parameter("world_size_m", float(_manifest.world_size_m))
+	_source_material.set_shader_parameter("max_height_m", _manifest.max_height_m)
+	_source_material.set_shader_parameter("sea_level_m", _manifest.sea_level_m)
+	_last_terrain_origin_xz = Vector2(global_position.x, global_position.z)
+	_source_material.set_shader_parameter("terrain_origin_world_xz", _last_terrain_origin_xz)
+
+
+func _update_terrain_origin_parameter() -> void:
+	if _source_material == null:
+		return
+	var current_origin := Vector2(global_position.x, global_position.z)
+	if current_origin.is_equal_approx(_last_terrain_origin_xz):
+		return
+	_last_terrain_origin_xz = current_origin
+	_source_material.set_shader_parameter("terrain_origin_world_xz", current_origin)
 
 
 func _update_camera_snapping() -> void:
