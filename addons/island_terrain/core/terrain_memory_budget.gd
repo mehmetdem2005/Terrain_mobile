@@ -16,6 +16,7 @@ enum DeviceProfile {
 @export_range(65, 1025, 64) var macro_height_resolution: int = Constants.MOBILE_MACRO_RESOLUTION
 @export_range(3, 7, 1) var clipmap_levels: int = Constants.DEFAULT_CLIPMAP_LEVELS
 @export_range(16, 96, 2) var base_quads: int = Constants.DEFAULT_BASE_QUADS
+@export_range(0, 7, 1) var shadow_lod_count: int = 3
 @export_range(0.25, 4.0, 0.25) var frame_work_budget_ms: float = Constants.DEFAULT_FRAME_WORK_BUDGET_MS
 @export_range(32.0, 256.0, 16.0) var collision_radius_m: float = Constants.DEFAULT_COLLISION_RADIUS_M
 @export_range(32, 512, 16) var terrain_ram_budget_mb: int = 128
@@ -31,6 +32,7 @@ static func create_for_profile(target_profile: DeviceProfile) -> IslandTerrainMe
 			budget.macro_height_resolution = 257
 			budget.clipmap_levels = 5
 			budget.base_quads = 48
+			budget.shadow_lod_count = 1
 			budget.frame_work_budget_ms = 1.0
 			budget.collision_radius_m = 64.0
 			budget.terrain_ram_budget_mb = 80
@@ -40,6 +42,7 @@ static func create_for_profile(target_profile: DeviceProfile) -> IslandTerrainMe
 			budget.macro_height_resolution = 257
 			budget.clipmap_levels = 6
 			budget.base_quads = 64
+			budget.shadow_lod_count = 2
 			budget.frame_work_budget_ms = 2.0
 			budget.collision_radius_m = 96.0
 			budget.terrain_ram_budget_mb = 128
@@ -49,6 +52,7 @@ static func create_for_profile(target_profile: DeviceProfile) -> IslandTerrainMe
 			budget.macro_height_resolution = 513
 			budget.clipmap_levels = 7
 			budget.base_quads = 80
+			budget.shadow_lod_count = 4
 			budget.frame_work_budget_ms = 3.0
 			budget.collision_radius_m = 160.0
 			budget.terrain_ram_budget_mb = 224
@@ -58,6 +62,7 @@ static func create_for_profile(target_profile: DeviceProfile) -> IslandTerrainMe
 			budget.macro_height_resolution = 513
 			budget.clipmap_levels = 7
 			budget.base_quads = 64
+			budget.shadow_lod_count = 2
 			budget.frame_work_budget_ms = 2.0
 			budget.collision_radius_m = 96.0
 			budget.terrain_ram_budget_mb = 160
@@ -71,6 +76,7 @@ func sanitize(editor_hint: bool) -> void:
 	macro_height_resolution = Constants.safe_macro_resolution(macro_height_resolution, editor_hint)
 	clipmap_levels = Constants.clamp_clipmap_levels(clipmap_levels)
 	base_quads = Constants.clamp_base_quads(base_quads)
+	shadow_lod_count = clampi(shadow_lod_count, 0, clipmap_levels)
 	frame_work_budget_ms = clampf(frame_work_budget_ms, 0.25, Constants.MAX_FRAME_WORK_BUDGET_MS)
 	collision_radius_m = clampf(collision_radius_m, 32.0, 256.0)
 	terrain_ram_budget_mb = clampi(terrain_ram_budget_mb, 32, 512)
