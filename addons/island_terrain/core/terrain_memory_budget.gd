@@ -14,7 +14,7 @@ enum DeviceProfile {
 @export var profile: DeviceProfile = DeviceProfile.BALANCED
 @export_range(1, 49, 1) var max_cached_regions: int = Constants.DEFAULT_MAX_CACHED_REGIONS
 @export_range(65, 1025, 64) var macro_height_resolution: int = Constants.MOBILE_MACRO_RESOLUTION
-@export_range(3, 6, 1) var clipmap_levels: int = Constants.DEFAULT_CLIPMAP_LEVELS
+@export_range(3, 7, 1) var clipmap_levels: int = Constants.DEFAULT_CLIPMAP_LEVELS
 @export_range(16, 96, 2) var base_quads: int = Constants.DEFAULT_BASE_QUADS
 @export_range(0.25, 4.0, 0.25) var frame_work_budget_ms: float = Constants.DEFAULT_FRAME_WORK_BUDGET_MS
 @export_range(32.0, 256.0, 16.0) var collision_radius_m: float = Constants.DEFAULT_COLLISION_RADIUS_M
@@ -29,7 +29,7 @@ static func create_for_profile(target_profile: DeviceProfile) -> IslandTerrainMe
 		DeviceProfile.LOW:
 			budget.max_cached_regions = 5
 			budget.macro_height_resolution = 257
-			budget.clipmap_levels = 4
+			budget.clipmap_levels = 5
 			budget.base_quads = 48
 			budget.frame_work_budget_ms = 1.0
 			budget.collision_radius_m = 64.0
@@ -38,7 +38,7 @@ static func create_for_profile(target_profile: DeviceProfile) -> IslandTerrainMe
 		DeviceProfile.BALANCED:
 			budget.max_cached_regions = 9
 			budget.macro_height_resolution = 257
-			budget.clipmap_levels = 5
+			budget.clipmap_levels = 6
 			budget.base_quads = 64
 			budget.frame_work_budget_ms = 2.0
 			budget.collision_radius_m = 96.0
@@ -47,7 +47,7 @@ static func create_for_profile(target_profile: DeviceProfile) -> IslandTerrainMe
 		DeviceProfile.HIGH:
 			budget.max_cached_regions = 25
 			budget.macro_height_resolution = 513
-			budget.clipmap_levels = 6
+			budget.clipmap_levels = 7
 			budget.base_quads = 80
 			budget.frame_work_budget_ms = 3.0
 			budget.collision_radius_m = 160.0
@@ -56,7 +56,7 @@ static func create_for_profile(target_profile: DeviceProfile) -> IslandTerrainMe
 		DeviceProfile.EDITOR_PREVIEW:
 			budget.max_cached_regions = 9
 			budget.macro_height_resolution = 513
-			budget.clipmap_levels = 5
+			budget.clipmap_levels = 7
 			budget.base_quads = 64
 			budget.frame_work_budget_ms = 2.0
 			budget.collision_radius_m = 96.0
@@ -86,6 +86,10 @@ func estimated_clipmap_vertices() -> int:
 func estimated_macro_height_bytes() -> int:
 	# RF height image: 4 bytes per texel.
 	return macro_height_resolution * macro_height_resolution * 4
+
+
+func clipmap_radius_m() -> float:
+	return Constants.clipmap_radius_m(base_quads, clipmap_levels)
 
 
 func can_cache_region(region_bytes: int, currently_cached_bytes: int) -> bool:
